@@ -4,7 +4,7 @@
 
 Durable Task Runner explores how multi-step jobs survive retries, cancellation, and worker failure. Correct state transitions matter more than feature count.
 
-Read `README.md` and `ROADMAP.md` before changing scope. This repository is in planning, so never describe a planned capability as implemented.
+Read `README.md` and `ROADMAP.md` before changing scope. Milestones 0 and 1 are implemented. Never describe milestone 2 or later work as implemented.
 
 ## Product rules
 
@@ -20,13 +20,23 @@ Read `README.md` and `ROADMAP.md` before changing scope. This repository is in p
 
 Start with one scheduler, worker processes, and one durable database. Do not add a broker, distributed lock service, or workflow DSL until the existing model cannot express a required behavior.
 
-The initial runtime has not been selected. Record the decision before scaffolding. Prefer types that make invalid workflow and step states difficult to represent.
+The runtime is Go 1.24 or later with PostgreSQL 17 and `pgx`. Keep the single-module shape described in `docs/decisions/0001-runtime-database-and-repository.md`. Prefer types that make invalid workflow and activity states difficult to represent.
 
 ## Verification
 
-There are no build or test commands yet. Add real commands here when the toolchain exists. Do not add placeholder scripts that always pass.
+Run the relevant checks before handing off changes:
 
-Use deterministic tests with a controllable clock. Cover worker crashes between side effects and acknowledgements, expired leases, duplicate delivery, cancellation races, retry exhaustion, and compensation failure.
+```sh
+gofmt -w .
+go vet ./...
+go vet -tags=integration ./...
+go test ./...
+DURABLE_TEST_DATABASE_URL='postgres://durable:durable@localhost:54329/durable?sslmode=disable' go test -tags=integration ./...
+```
+
+`make check` runs the non-mutating formatting check, static analysis, unit tests, and integration tests after `make deps-up` starts PostgreSQL.
+
+Use deterministic tests with a controllable clock. The current milestone tests must cover worker crashes between side effects and acknowledgements, expired leases, duplicate delivery, concurrent claims, invalid transitions, and recovery. Add cancellation races, retry exhaustion, and compensation failure tests when milestone 2 implements those behaviors.
 
 Do not use real third-party services in tests. Model activities with deterministic fakes and explicit failure injection.
 

@@ -1,0 +1,397 @@
+package durable
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type Engine struct {
+	pool     *pgxpool.Pool
+	registry *Registry
+	clock    Clock
+	ownsPool bool
+}
+
+func New(pool *pgxpool.Pool, registry *Registry, clock Clock) (*Engine, error) {
+	if pool == nil {
+		return nil, fmt.Errorf("PostgreSQL pool is required")
+	}
+	if registry == nil {
+		return nil, fmt.Errorf("workflow registry is required")
+	}
+	if clock == nil {
+		return nil, fmt.Errorf("clock is required")
+	}
+	return &Engine{pool: pool, registry: registry, clock: clock}, nil
+}
+
+func Open(ctx context.Context, databaseURL string, registry *Registry, clock Clock) (*Engine, error) {
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("open PostgreSQL: %w", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("ping PostgreSQL: %w", err)
+	}
+	engine, err := New(pool, registry, clock)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	engine.ownsPool = true
+	return engine, nil
+}
+
+func (e *Engine) Close() {
+	if e != nil && e.ownsPool {
+		e.pool.Close()
+	}
+}
+
+func (e *Engine) Migrate(ctx context.Context) error {
+	return Migrate(ctx, e.pool)
+}
+
+func (e *Engine) start(ctx context.Context, definitionName string, input any) (WorkflowExecution, error) {
+	definition, ok := e.registry.lookup(definitionName)
+	if !ok {
+		return WorkflowExecution{}, fmt.Errorf("%w: %q", ErrUnknownWorkflow, definitionName)
+	}
+	encodedInput, activitySpecs, err := definition.encodePlan(input)
+	if err != nil {
+		return WorkflowExecution{}, err
+	}
+
+	workflowID, err := newID()
+	if err != nil {
+		return WorkflowExecution{}, err
+	}
+	activityIDs := make([]string, len(activitySpecs))
+	for i := range activitySpecs {
+		activityIDs[i], err = newID()
+		if err != nil {
+			return WorkflowExecution{}, err
+		}
+	}
+	now := e.clock.Now().UTC()
+	execution := WorkflowExecution{
+		ID:             workflowID,
+		DefinitionName: definitionName,
+		Input:          encodedInput,
+		State:          WorkflowRunning,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	tx, err := e.pool.Begin(ctx)
+	if err != nil {
+		return WorkflowExecution{}, fmt.Errorf("begin workflow: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO workflow_executions (id, definition_name, input, state, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $5)`,
+		workflowID, definitionName, encodedInput, WorkflowRunning, now)
+	if err != nil {
+		return WorkflowExecution{}, fmt.Errorf("persist workflow: %w", err)
+	}
+	if err := appendHistory(ctx, tx, workflowID, nil, nil, "workflow.started", map[string]any{
+		"definition": definitionName,
+	}, now); err != nil {
+		return WorkflowExecution{}, err
+	}
+
+	for i, spec := range activitySpecs {
+		state := ActivityBlocked
+		if i == 0 {
+			state = ActivityReady
+		}
+		_, err := tx.Exec(ctx, `
+			INSERT INTO activities (id, workflow_id, position, name, input, state, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
+			activityIDs[i], workflowID, i, spec.Name, spec.Input, state, now)
+		if err != nil {
+			return WorkflowExecution{}, fmt.Errorf("persist activity %d: %w", i, err)
+		}
+		if err := appendHistory(ctx, tx, workflowID, &activityIDs[i], nil, "activity.scheduled", map[string]any{
+			"name": spec.Name, "position": i, "state": state,
+		}, now); err != nil {
+			return WorkflowExecution{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return WorkflowExecution{}, fmt.Errorf("commit workflow: %w", err)
+	}
+	return execution, nil
+}
+
+func (e *Engine) ClaimActivity(ctx context.Context, workerID string, leaseDuration time.Duration) (Claim, error) {
+	if workerID == "" {
+		return Claim{}, fmt.Errorf("worker id is required")
+	}
+	if leaseDuration <= 0 {
+		return Claim{}, fmt.Errorf("lease duration must be positive")
+	}
+	now := e.clock.Now().UTC()
+
+	tx, err := e.pool.Begin(ctx)
+	if err != nil {
+		return Claim{}, fmt.Errorf("begin claim: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var claim Claim
+	var currentState ActivityState
+	err = tx.QueryRow(ctx, `
+		SELECT a.id, a.workflow_id, a.name, a.input, a.attempt_count, a.state
+		FROM activities a
+		JOIN workflow_executions w ON w.id = a.workflow_id
+		WHERE a.state = 'ready' AND w.state = 'running'
+		ORDER BY a.created_at, a.workflow_id, a.position
+		FOR UPDATE OF a SKIP LOCKED
+		LIMIT 1`).Scan(
+		&claim.ActivityID, &claim.WorkflowID, &claim.ActivityName, &claim.ActivityInput,
+		&claim.AttemptNumber, &currentState,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Claim{}, ErrNoActivity
+	}
+	if err != nil {
+		return Claim{}, fmt.Errorf("select activity to claim: %w", err)
+	}
+	if err := ValidateActivityTransition(currentState, ActivityRunning); err != nil {
+		return Claim{}, err
+	}
+
+	claim.AttemptNumber++
+	claim.AttemptID, err = newID()
+	if err != nil {
+		return Claim{}, err
+	}
+	claim.LeaseID, err = newID()
+	if err != nil {
+		return Claim{}, err
+	}
+	claim.LeaseToken, err = newID()
+	if err != nil {
+		return Claim{}, err
+	}
+	claim.WorkerID = workerID
+	claim.LeaseExpiresAt = now.Add(leaseDuration)
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE activities SET state = $2, attempt_count = $3, updated_at = $4 WHERE id = $1`,
+		claim.ActivityID, ActivityRunning, claim.AttemptNumber, now); err != nil {
+		return Claim{}, fmt.Errorf("mark activity running: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO attempts (id, activity_id, number, worker_id, state, started_at)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		claim.AttemptID, claim.ActivityID, claim.AttemptNumber, workerID, AttemptRunning, now); err != nil {
+		return Claim{}, fmt.Errorf("persist attempt: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO leases (id, activity_id, attempt_id, token, worker_id, state, acquired_at, heartbeat_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8)`,
+		claim.LeaseID, claim.ActivityID, claim.AttemptID, claim.LeaseToken, workerID, LeaseActive, now, claim.LeaseExpiresAt); err != nil {
+		return Claim{}, fmt.Errorf("persist lease: %w", err)
+	}
+	if err := appendHistory(ctx, tx, claim.WorkflowID, &claim.ActivityID, &claim.AttemptID, "activity.claimed", map[string]any{
+		"attempt": claim.AttemptNumber, "lease_expires_at": claim.LeaseExpiresAt, "worker_id": workerID,
+	}, now); err != nil {
+		return Claim{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Claim{}, fmt.Errorf("commit claim: %w", err)
+	}
+	return claim, nil
+}
+
+func (e *Engine) Heartbeat(ctx context.Context, claim Claim, extension time.Duration) (time.Time, error) {
+	if extension <= 0 {
+		return time.Time{}, fmt.Errorf("heartbeat extension must be positive")
+	}
+	now := e.clock.Now().UTC()
+	requestedExpiry := now.Add(extension)
+	var expiresAt time.Time
+	err := e.pool.QueryRow(ctx, `
+		UPDATE leases l
+		SET heartbeat_at = $2, expires_at = GREATEST(l.expires_at, $3)
+		FROM activities a, attempts at
+		WHERE l.token = $1
+		  AND l.activity_id = a.id
+		  AND l.attempt_id = at.id
+		  AND l.state = 'active'
+		  AND a.state = 'running'
+		  AND at.state = 'running'
+		  AND l.expires_at > $2
+		RETURNING l.expires_at`, claim.LeaseToken, now, requestedExpiry).Scan(&expiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, ErrLeaseLost
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("heartbeat activity: %w", err)
+	}
+	return expiresAt, nil
+}
+
+func (e *Engine) CompleteActivity(ctx context.Context, claim Claim, output json.RawMessage) error {
+	if len(output) == 0 {
+		output = json.RawMessage("null")
+	}
+	if !json.Valid(output) {
+		return fmt.Errorf("activity output must be valid JSON")
+	}
+	return e.finishActivity(ctx, claim, output, "")
+}
+
+func (e *Engine) FailActivity(ctx context.Context, claim Claim, activityErr error) error {
+	if activityErr == nil {
+		return fmt.Errorf("activity error is required")
+	}
+	return e.finishActivity(ctx, claim, nil, activityErr.Error())
+}
+
+func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.RawMessage, errorText string) error {
+	now := e.clock.Now().UTC()
+	tx, err := e.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin activity completion: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var workflowID string
+	var position int
+	var activityState ActivityState
+	var attemptState AttemptState
+	var leaseState LeaseState
+	var expiresAt time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT a.workflow_id, a.position, a.state, at.state, l.state, l.expires_at
+		FROM leases l
+		JOIN activities a ON a.id = l.activity_id
+		JOIN attempts at ON at.id = l.attempt_id
+		WHERE l.token = $1 AND l.activity_id = $2 AND l.attempt_id = $3
+		FOR UPDATE OF l, a, at`, claim.LeaseToken, claim.ActivityID, claim.AttemptID).Scan(
+		&workflowID, &position, &activityState, &attemptState, &leaseState, &expiresAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrLeaseLost
+	}
+	if err != nil {
+		return fmt.Errorf("lock activity completion: %w", err)
+	}
+	if activityState != ActivityRunning || attemptState != AttemptRunning || leaseState != LeaseActive || !expiresAt.After(now) {
+		return ErrLeaseLost
+	}
+	if err := ValidateLeaseTransition(leaseState, LeaseReleased); err != nil {
+		return err
+	}
+
+	if errorText != "" {
+		if err := ValidateActivityTransition(activityState, ActivityFailed); err != nil {
+			return err
+		}
+		if err := ValidateAttemptTransition(attemptState, AttemptFailed); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE leases SET state = $2, ended_at = $3 WHERE token = $1`, claim.LeaseToken, LeaseReleased, now); err != nil {
+			return fmt.Errorf("release failed lease: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE attempts SET state = $2, error_text = $3, ended_at = $4 WHERE id = $1`, claim.AttemptID, AttemptFailed, errorText, now); err != nil {
+			return fmt.Errorf("fail attempt: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE activities SET state = $2, updated_at = $3, completed_at = $3 WHERE id = $1`, claim.ActivityID, ActivityFailed, now); err != nil {
+			return fmt.Errorf("fail activity: %w", err)
+		}
+		if err := appendHistory(ctx, tx, workflowID, &claim.ActivityID, &claim.AttemptID, "activity.failed", map[string]any{"error": errorText}, now); err != nil {
+			return err
+		}
+		if err := ValidateWorkflowTransition(WorkflowRunning, WorkflowFailed); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE workflow_executions SET state = $2, updated_at = $3, completed_at = $3 WHERE id = $1 AND state = $4`, workflowID, WorkflowFailed, now, WorkflowRunning); err != nil {
+			return fmt.Errorf("fail workflow: %w", err)
+		}
+		if err := appendHistory(ctx, tx, workflowID, nil, nil, "workflow.failed", map[string]any{"activity_id": claim.ActivityID}, now); err != nil {
+			return err
+		}
+	} else {
+		if err := ValidateActivityTransition(activityState, ActivityCompleted); err != nil {
+			return err
+		}
+		if err := ValidateAttemptTransition(attemptState, AttemptCompleted); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE leases SET state = $2, ended_at = $3 WHERE token = $1`, claim.LeaseToken, LeaseReleased, now); err != nil {
+			return fmt.Errorf("release completed lease: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE attempts SET state = $2, ended_at = $3 WHERE id = $1`, claim.AttemptID, AttemptCompleted, now); err != nil {
+			return fmt.Errorf("complete attempt: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE activities SET state = $2, output = $3, updated_at = $4, completed_at = $4 WHERE id = $1`, claim.ActivityID, ActivityCompleted, output, now); err != nil {
+			return fmt.Errorf("complete activity: %w", err)
+		}
+		if err := appendHistory(ctx, tx, workflowID, &claim.ActivityID, &claim.AttemptID, "activity.completed", map[string]any{"attempt": claim.AttemptNumber}, now); err != nil {
+			return err
+		}
+
+		var nextActivityID string
+		err := tx.QueryRow(ctx, `
+			SELECT id FROM activities
+			WHERE workflow_id = $1 AND position > $2 AND state = 'blocked'
+			ORDER BY position
+			LIMIT 1
+			FOR UPDATE`, workflowID, position).Scan(&nextActivityID)
+		switch {
+		case err == nil:
+			if err := ValidateActivityTransition(ActivityBlocked, ActivityReady); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE activities SET state = $2, updated_at = $3 WHERE id = $1`, nextActivityID, ActivityReady, now); err != nil {
+				return fmt.Errorf("schedule next activity: %w", err)
+			}
+			if err := appendHistory(ctx, tx, workflowID, &nextActivityID, nil, "activity.ready", map[string]any{}, now); err != nil {
+				return err
+			}
+		case errors.Is(err, pgx.ErrNoRows):
+			if err := ValidateWorkflowTransition(WorkflowRunning, WorkflowCompleted); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE workflow_executions SET state = $2, updated_at = $3, completed_at = $3 WHERE id = $1 AND state = $4`, workflowID, WorkflowCompleted, now, WorkflowRunning); err != nil {
+				return fmt.Errorf("complete workflow: %w", err)
+			}
+			if err := appendHistory(ctx, tx, workflowID, nil, nil, "workflow.completed", map[string]any{}, now); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("find next activity: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit activity completion: %w", err)
+	}
+	return nil
+}
+
+func appendHistory(ctx context.Context, tx pgx.Tx, workflowID string, activityID, attemptID *string, eventType string, details any, at time.Time) error {
+	encoded, err := json.Marshal(details)
+	if err != nil {
+		return fmt.Errorf("encode history event %q: %w", eventType, err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO execution_history (workflow_id, activity_id, attempt_id, event_type, details, recorded_at)
+		VALUES ($1, $2, $3, $4, $5, $6)`, workflowID, activityID, attemptID, eventType, encoded, at); err != nil {
+		return fmt.Errorf("append history event %q: %w", eventType, err)
+	}
+	return nil
+}
