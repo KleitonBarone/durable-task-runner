@@ -40,6 +40,8 @@ func TestIsolatedDatabaseLifecycle(t *testing.T) {
 					}
 				case "port":
 					return "127.0.0.1:49123\n", nil
+				case "ps":
+					return "abc123def456\n", nil
 				case "down":
 					cleanupCalled = true
 					if failure == "cleanup" {
@@ -51,10 +53,10 @@ func TestIsolatedDatabaseLifecycle(t *testing.T) {
 			a := testApp(r)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			err := a.withDatabase(ctx, func(_ context.Context, url string) error {
+			err := a.withDatabase(ctx, func(_ context.Context, db database) error {
 				callbackCalled = true
-				if url != "postgres://durable:durable@localhost:49123/durable?sslmode=disable" {
-					t.Fatalf("database URL = %q", url)
+				if db.url != "postgres://durable:durable@localhost:49123/durable?sslmode=disable" {
+					t.Fatalf("database URL = %q", db.url)
 				}
 				if failure == "test" {
 					return errors.New("assertion failed")

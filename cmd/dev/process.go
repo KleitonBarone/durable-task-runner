@@ -22,9 +22,46 @@ type command struct {
 
 type commandRunner interface {
 	run(context.Context, command) (string, error)
+	hold(context.Context, command) (func() error, error)
 }
 
 type executor struct{ out io.Writer }
+
+// hold keeps an input-driven process alive until the returned closer is called.
+// WSL can stop systemd services when no foreground Linux process remains.
+func (r executor) hold(ctx context.Context, c command) (func() error, error) {
+	processCtx, cancel := context.WithCancel(ctx)
+	cmd := exec.CommandContext(processCtx, c.name, c.args...)
+	cmd.Dir = c.dir
+	cmd.Env = append(os.Environ(), c.env...)
+	cmd.Stdout, cmd.Stderr = r.out, r.out
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		cancel()
+		_ = stdin.Close()
+		return nil, err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	return func() error {
+		defer cancel()
+		_ = stdin.Close()
+		select {
+		case err := <-done:
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		case <-time.After(5 * time.Second):
+			cancel()
+			return fmt.Errorf("WSL keep-alive did not terminate after closing input")
+		}
+	}, nil
+}
 
 func (r executor) run(ctx context.Context, c command) (string, error) {
 	cmd := exec.CommandContext(ctx, c.name, c.args...)
@@ -49,6 +86,7 @@ func (r executor) run(ctx context.Context, c command) (string, error) {
 type tool struct {
 	name   string
 	prefix []string
+	root   string
 }
 
 func (t tool) command(dir string, args ...string) command {
@@ -57,7 +95,7 @@ func (t tool) command(dir string, args ...string) command {
 
 func (a *app) docker(ctx context.Context) (tool, error) {
 	if path, err := a.lookPath("docker"); err == nil {
-		return tool{name: path}, nil
+		return tool{name: path, root: a.root}, nil
 	}
 	if a.goos != "windows" {
 		return tool{}, fmt.Errorf("Docker with Compose is required; docker was not found on PATH")
@@ -79,5 +117,5 @@ func (a *app) docker(ctx context.Context) (tool, error) {
 	if !strings.HasPrefix(linuxRoot, "/") || strings.ContainsAny(linuxRoot, "\r\n") {
 		return tool{}, fmt.Errorf("WSL returned an invalid repository path")
 	}
-	return tool{name: wsl, prefix: []string{"-d", distro, "--cd", linuxRoot, "--exec", "docker"}}, nil
+	return tool{name: wsl, root: linuxRoot, prefix: []string{"-d", distro, "--cd", linuxRoot, "--exec", "docker"}}, nil
 }

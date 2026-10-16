@@ -34,10 +34,27 @@ const verificationCompose = `services:
       retries: 30
 `
 
-func (a *app) withDatabase(ctx context.Context, use func(context.Context, string) error) (result error) {
+type database struct {
+	url       string
+	project   string
+	container string
+	docker    tool
+}
+
+func (a *app) withDatabase(ctx context.Context, use func(context.Context, database) error) (result error) {
 	docker, err := a.docker(ctx)
 	if err != nil {
 		return err
+	}
+	if len(docker.prefix) > 0 {
+		// Keep WSL alive across native Windows Go commands, then close stdin to
+		// release it. timeout also bounds the remote process if its client dies.
+		release, err := a.runner.hold(ctx, command{name: docker.name, dir: a.root,
+			args: []string{"-d", docker.prefix[1], "--exec", "timeout", "900", "cat"}})
+		if err != nil {
+			return fmt.Errorf("keep WSL available during verification: %w", err)
+		}
+		defer func() { result = errors.Join(result, release()) }()
 	}
 	var suffix [8]byte
 	if _, err := rand.Read(suffix[:]); err != nil {
@@ -73,7 +90,15 @@ func (a *app) withDatabase(ctx context.Context, use func(context.Context, string
 		return fmt.Errorf("unexpected isolated PostgreSQL binding %q", strings.TrimSpace(binding))
 	}
 	databaseURL := "postgres://durable:durable@" + net.JoinHostPort("localhost", port) + "/durable?sslmode=disable"
-	return use(ctx, databaseURL)
+	container, err := compose(ctx, "ps", "-q", "postgres")
+	if err != nil {
+		return err
+	}
+	container = strings.TrimSpace(container)
+	if container == "" || strings.ContainsAny(container, "\r\n ") {
+		return errors.New("isolated PostgreSQL container identity is missing")
+	}
+	return use(ctx, database{url: databaseURL, project: project, container: container, docker: docker})
 }
 
 func (a *app) integration(ctx context.Context, databaseURL string, args []string) error {

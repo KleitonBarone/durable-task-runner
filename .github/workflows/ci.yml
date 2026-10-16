@@ -8,38 +8,66 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_DB: durable
-          POSTGRES_PASSWORD: durable
-          POSTGRES_USER: durable
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U durable -d durable"
-          --health-interval 1s
-          --health-timeout 5s
-          --health-retries 20
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.24.x', '1.26.x']
     env:
-      DURABLE_TEST_DATABASE_URL: postgres://durable:durable@localhost:5432/durable?sslmode=disable
+      DURABLE_TEST_ARTIFACT_DIR: artifacts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+      - name: Verify the complete development loop
+        run: go run ./cmd/dev check
+      - name: Repeat process recovery
+        run: go run ./cmd/dev e2e -count=2 -run=TestProcessCrashRecovery .
+      - name: Retain failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-${{ matrix.go }}
+          path: artifacts/
+
+  race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DURABLE_TEST_ARTIFACT_DIR: artifacts
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - name: Check formatting
-        run: test -z "$(gofmt -l .)"
-      - name: Run static analysis
-        run: |
-          go vet ./...
-          go vet -tags=integration ./...
-      - name: Run unit tests
-        run: go test ./...
-      - name: Run integration tests
-        run: go test -tags=integration ./...
+      - run: go run ./cmd/dev race
+      - name: Repeat concurrent claims and recovery
+        run: go run ./cmd/dev race -count=3 -run='TestConcurrentClaims|TestWorkerCrash|TestWorkerLeaseLoss|TestSchedulerRun' .
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: race
+          path: artifacts/
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go run ./cmd/dev fmt-check
+      - run: go run ./cmd/dev lint
+      - run: go run ./cmd/dev test

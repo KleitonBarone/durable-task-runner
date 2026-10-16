@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -23,6 +24,10 @@ func (r *fakeRunner) run(ctx context.Context, c command) (string, error) {
 		return r.respond(c)
 	}
 	return "", nil
+}
+
+func (r *fakeRunner) hold(context.Context, command) (func() error, error) {
+	return func() error { return nil }, nil
 }
 
 func testApp(r *fakeRunner) app {
@@ -114,5 +119,28 @@ func TestDoctorStopsOnUnavailableDaemon(t *testing.T) {
 	}
 	if len(r.commands) != 3 {
 		t.Fatalf("doctor ran %d commands after daemon failure", len(r.commands))
+	}
+}
+
+func TestHoldInputFixture(t *testing.T) {
+	if os.Getenv("DURABLE_HOLD_FIXTURE") == "1" {
+		if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestExecutorHoldReleasesItsInputProcess(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := (executor{out: io.Discard}).hold(t.Context(), command{name: executable,
+		args: []string{"-test.run=^TestHoldInputFixture$"}, env: []string{"DURABLE_HOLD_FIXTURE=1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
 	}
 }
