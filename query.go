@@ -27,7 +27,7 @@ func (e *Engine) Workflow(ctx context.Context, workflowID string) (WorkflowExecu
 
 func (e *Engine) Activities(ctx context.Context, workflowID string) ([]Activity, error) {
 	rows, err := e.pool.Query(ctx, `
-		SELECT id, workflow_id, position, name, input, COALESCE(output, 'null'::jsonb), state,
+		SELECT id, workflow_id, position, name, input, COALESCE(output, 'null'::jsonb), state, step_key,
 		       attempt_count, created_at, updated_at, completed_at
 		FROM activities WHERE workflow_id = $1 ORDER BY position`, workflowID)
 	if err != nil {
@@ -39,7 +39,7 @@ func (e *Engine) Activities(ctx context.Context, workflowID string) ([]Activity,
 		var activity Activity
 		if err := rows.Scan(
 			&activity.ID, &activity.WorkflowID, &activity.Position, &activity.Name,
-			&activity.Input, &activity.Output, &activity.State, &activity.AttemptCount,
+			&activity.Input, &activity.Output, &activity.State, &activity.StepKey, &activity.AttemptCount,
 			&activity.CreatedAt, &activity.UpdatedAt, &activity.CompletedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan activity: %w", err)

@@ -10,11 +10,11 @@ public Go package. It defines typed workflow input, creates two activity specs,
 registers the workflow and typed handlers, opens PostgreSQL, applies migrations,
 starts an execution, runs its handlers, and prints the timeline.
 
-Use the checkout for now. The declared module is
-`github.com/kleiton/durable-task-runner`, while the repository lives at
-`github.com/KleitonBarone/durable-task-runner`. Normal installation from the
-repository URL needs that mismatch resolved. Existing example imports match the
-current `go.mod`; changing an import alone will not fix packaging.
+Install an exact pushed revision with
+`go get github.com/KleitonBarone/durable-task-runner@<commit>`.
+`go run ./cmd/dev consumer` builds and runs a separate consumer module. Set
+`DURABLE_CONSUMER_VERSION` to a pushed SHA to use a fresh module cache without
+local replacements. There is no release tag yet.
 
 ## Define and persist the work
 
@@ -29,10 +29,13 @@ initial history together. Only the first step starts ready.
 
 Completing a step makes the next one ready in the same transaction. Plans are
 fixed at start; branching, parallel activities, and child workflows are absent.
-Each activity receives the input stored in its spec. Outputs are stored as JSON
-and readable through `Engine.Activities`; they are not automatically passed to
-the next step. Activity names do not currently enforce matching input/output types
-between a plan and a handler.
+Use `durable.DefineActivity[Input, Output](name)` to share one activity declaration
+between `activity.Step(key, input)` in a plan and `activity.Handle(handler)` in a
+worker. Step keys are unique within a workflow, independent of activity name.
+Conflicting type declarations are rejected within a registry. Keep named Go types
+compatible across deployments; these identities do not replace schema versioning.
+The raw `NewActivity` and `Handle` functions remain available for existing users.
+Outputs are stored as JSON and readable through `Engine.Activities`.
 
 Starting twice creates two executions. There is no built-in start-key deduplication.
 If a start returns an ambiguous database error, it may have committed. Do not assume

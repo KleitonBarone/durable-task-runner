@@ -54,6 +54,7 @@ type Activity struct {
 	ID           string
 	WorkflowID   string
 	Position     int
+	StepKey      string
 	Name         string
 	Input        json.RawMessage
 	Output       json.RawMessage

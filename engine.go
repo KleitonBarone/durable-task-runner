@@ -68,6 +68,16 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any) (W
 	if err != nil {
 		return WorkflowExecution{}, err
 	}
+	contracts := make(map[string]string)
+	for _, spec := range activitySpecs {
+		if previous, ok := contracts[spec.Name]; ok && previous != spec.contract {
+			return WorkflowExecution{}, fmt.Errorf("activity %q has incompatible types in plan", spec.Name)
+		}
+		contracts[spec.Name] = spec.contract
+	}
+	if err := e.registry.bindActivities(contracts); err != nil {
+		return WorkflowExecution{}, err
+	}
 
 	workflowID, err := newID()
 	if err != nil {
@@ -115,14 +125,14 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any) (W
 			state = ActivityReady
 		}
 		_, err := tx.Exec(ctx, `
-			INSERT INTO activities (id, workflow_id, position, name, input, state, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
-			activityIDs[i], workflowID, i, spec.Name, spec.Input, state, now)
+			INSERT INTO activities (id, workflow_id, position, name, input, state, created_at, updated_at, step_key, contract)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9)`,
+			activityIDs[i], workflowID, i, spec.Name, spec.Input, state, now, spec.Key, spec.contract)
 		if err != nil {
 			return WorkflowExecution{}, fmt.Errorf("persist activity %d: %w", i, err)
 		}
 		if err := appendHistory(ctx, tx, workflowID, &activityIDs[i], nil, "activity.scheduled", map[string]any{
-			"name": spec.Name, "position": i, "state": state,
+			"name": spec.Name, "position": i, "state": state, "step_key": spec.Key,
 		}, now); err != nil {
 			return WorkflowExecution{}, err
 		}

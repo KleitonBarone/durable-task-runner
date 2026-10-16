@@ -37,6 +37,7 @@ func NewWorker(engine *Engine, config WorkerConfig, registrations ...HandlerRegi
 		return nil, fmt.Errorf("poll interval must be positive")
 	}
 	handlers := make(map[string]Handler, len(registrations))
+	contracts := make(map[string]string, len(registrations))
 	for _, registration := range registrations {
 		if registration.Name == "" || registration.Handler == nil {
 			return nil, fmt.Errorf("handler name and function are required")
@@ -45,6 +46,10 @@ func NewWorker(engine *Engine, config WorkerConfig, registrations ...HandlerRegi
 			return nil, fmt.Errorf("handler %q is registered twice", registration.Name)
 		}
 		handlers[registration.Name] = registration.Handler
+		contracts[registration.Name] = registration.contract
+	}
+	if err := engine.registry.bindActivities(contracts); err != nil {
+		return nil, err
 	}
 	return &Worker{engine: engine, config: config, handlers: handlers}, nil
 }

@@ -68,3 +68,30 @@ func TestHandlerKeepsTypedBoundary(t *testing.T) {
 		t.Fatal("invalid handler input was accepted")
 	}
 }
+
+func TestTypedActivityAndStepValidation(t *testing.T) {
+	a := DefineActivity[string, int]("length")
+	spec, err := a.Step("first", "hello")
+	if err != nil || spec.Key != "first" || spec.contract != a.Handle(func(context.Context, string) (int, error) { return 5, nil }).contract {
+		t.Fatalf("typed step = %#v, err = %v", spec, err)
+	}
+	if _, err := a.Step("", "hello"); err == nil {
+		t.Fatal("empty key accepted")
+	}
+	r := NewRegistry()
+	definition := Define("duplicate", func(string) ([]ActivitySpec, error) { return []ActivitySpec{spec, spec}, nil })
+	if err := Register(r, definition); err != nil {
+		t.Fatal(err)
+	}
+	registered, _ := r.lookup(definition.Name)
+	if _, _, err := registered.encodePlan(""); err == nil {
+		t.Fatal("duplicate keys accepted")
+	}
+	if err := r.bindActivities(map[string]string{spec.Name: spec.contract}); err != nil {
+		t.Fatal(err)
+	}
+	b := DefineActivity[int, int]("length")
+	if err := r.bindActivities(map[string]string{"length": b.contract()}); err == nil {
+		t.Fatal("conflicting types accepted")
+	}
+}

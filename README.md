@@ -50,8 +50,9 @@ Workers can run as separate processes. The library provides worker and scheduler
 loops; your application owns their configuration and lifecycle. No message broker
 or separate control service is required.
 
-For now, use the checkout to evaluate integration. The Go module path needs to be
-aligned with this repository before a normal tagged installation is ready.
+Install an exact pushed revision with `go get
+github.com/KleitonBarone/durable-task-runner@<commit>`. The module path is verified
+from a separate consumer without a local replacement. A release tag is still planned.
 
 ## What survives a crash?
 

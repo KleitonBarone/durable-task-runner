@@ -10,8 +10,10 @@ import (
 )
 
 type ActivitySpec struct {
-	Name  string
-	Input json.RawMessage
+	Name     string
+	Key      string
+	Input    json.RawMessage
+	contract string
 }
 
 func NewActivity[Input any](name string, input Input) (ActivitySpec, error) {
@@ -45,10 +47,11 @@ type registeredDefinition struct {
 type Registry struct {
 	mu          sync.RWMutex
 	definitions map[string]registeredDefinition
+	activities  map[string]string
 }
 
 func NewRegistry() *Registry {
-	return &Registry{definitions: make(map[string]registeredDefinition)}
+	return &Registry{definitions: make(map[string]registeredDefinition), activities: make(map[string]string)}
 }
 
 func Register[Input any](registry *Registry, definition Definition[Input]) error {
@@ -81,7 +84,16 @@ func Register[Input any](registry *Registry, definition Definition[Input]) error
 			if len(activities) == 0 {
 				return nil, nil, fmt.Errorf("workflow %q must schedule at least one activity", definition.Name)
 			}
-			for i, activity := range activities {
+			keys := make(map[string]bool, len(activities))
+			for i := range activities {
+				activity := &activities[i]
+				if activity.Key == "" {
+					activity.Key = fmt.Sprintf("step-%d", i)
+				}
+				if keys[activity.Key] || strings.TrimSpace(activity.Key) == "" || len(activity.Key) > 200 {
+					return nil, nil, fmt.Errorf("workflow %q has invalid or duplicate step key %q", definition.Name, activity.Key)
+				}
+				keys[activity.Key] = true
 				if strings.TrimSpace(activity.Name) == "" {
 					return nil, nil, fmt.Errorf("workflow %q activity %d has no name", definition.Name, i)
 				}
@@ -112,6 +124,22 @@ func (r *Registry) lookup(name string) (registeredDefinition, bool) {
 	return definition, ok
 }
 
+// bindActivities rejects conflicting type declarations within this process.
+// Persisted contracts also let separate worker processes select compatible work.
+func (r *Registry) bindActivities(contracts map[string]string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for name, contract := range contracts {
+		if previous, ok := r.activities[name]; ok && previous != contract {
+			return fmt.Errorf("activity %q has incompatible type registrations", name)
+		}
+	}
+	for name, contract := range contracts {
+		r.activities[name] = contract
+	}
+	return nil
+}
+
 func Start[Input any](ctx context.Context, engine *Engine, definition Definition[Input], input Input) (WorkflowExecution, error) {
 	return engine.start(ctx, definition.Name, input)
 }
@@ -119,11 +147,15 @@ func Start[Input any](ctx context.Context, engine *Engine, definition Definition
 type Handler func(context.Context, json.RawMessage) (json.RawMessage, error)
 
 type HandlerRegistration struct {
-	Name    string
-	Handler Handler
+	Name     string
+	Handler  Handler
+	contract string
 }
 
 func Handle[Input, Output any](name string, handler func(context.Context, Input) (Output, error)) HandlerRegistration {
+	if handler == nil {
+		return HandlerRegistration{Name: name}
+	}
 	return HandlerRegistration{
 		Name: name,
 		Handler: func(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
