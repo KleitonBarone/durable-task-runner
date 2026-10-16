@@ -50,3 +50,11 @@ same input. Conflicting input returns `ErrStartConflict`; terminal executions ar
 never restarted by reusing their key. Keys last as long as their execution rows.
 No retention is implemented. Callers resolve ambiguous commit errors by repeating
 the same keyed request. Unkeyed starts intentionally create independent executions.
+
+Handler context exposes workflow/step/activity identity and attempt metadata.
+The effect key is `durable:<activity UUID>`, derived from the persisted logical
+activity identity, independent of attempt number and ownership token. Application
+deduplication must commit its key with its effect in the effect's own system.
+The process fixture kills a worker after that commit and proves two deliveries
+use one key and produce one effect. A separate fixture still demonstrates two
+effects when the application does not deduplicate. Delivery remains at least once.

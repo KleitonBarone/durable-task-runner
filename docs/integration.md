@@ -115,10 +115,17 @@ There is no hard execution timeout yet.
 
 ## Make side effects safe to repeat
 
-Use an application-owned stable business key in activity input and deduplicate
-the side effect using that key. Do not use an attempt number or lease token as
-the logical effect identity; replacement attempts must identify the same effect.
-There is no engine-managed effect key in the current handler API.
+`durable.Metadata(ctx)` gives a handler its workflow ID, step key, activity ID,
+worker ID, attempt ID/number, and stable `EffectKey`. Deduplicate the side effect
+with that effect key or an application-owned business key. The engine key is
+`durable:<activity UUID>` and stays the same for replacement attempts of that
+logical step. Different steps have different keys. Attempt IDs/numbers and lease
+tokens identify deliveries or ownership, so they must not identify the effect.
+Pass a separate suffix when a handler performs several independent effects.
+
+Deduplication belongs to the application or external service. Persist the key and
+effect atomically in that system. Recording a key in the engine's database before
+calling an unrelated external service cannot make the external effect atomic.
 
 Lease expiry prevents stale engine acknowledgements, but cannot undo an external
 effect. If a worker commits an external effect and dies before acknowledging it,

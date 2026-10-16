@@ -89,10 +89,21 @@ func TestProcessFixture(t *testing.T) {
 					<-ctx.Done()
 					return "", ctx.Err()
 				}
-				if _, err := pool.Exec(ctx, `INSERT INTO fixture_effects (worker, step) VALUES ($1, $2)`, id, step); err != nil {
+				metadata, ok := durable.Metadata(ctx)
+				if !ok {
+					return "", errors.New("missing activity metadata")
+				}
+				if _, err := pool.Exec(ctx, `INSERT INTO fixture_deliveries (step, effect_key, attempt, attempt_id, workflow_id, step_key) VALUES ($1, $2, $3, $4, $5, $6)`, step, metadata.EffectKey, metadata.AttemptNumber, metadata.AttemptID, metadata.WorkflowID, metadata.StepKey); err != nil {
 					return "", err
 				}
-				if step == "effect" && window == "after" {
+				var effectKey *string
+				if window == "dedup" || window == "dedup-recover" {
+					effectKey = &metadata.EffectKey
+				}
+				if _, err := pool.Exec(ctx, `INSERT INTO fixture_effects (worker, step, effect_key) VALUES ($1, $2, $3) ON CONFLICT (effect_key) DO NOTHING`, id, step, effectKey); err != nil {
+					return "", err
+				}
+				if step == "effect" && (window == "after" || window == "dedup") {
 					if err := barrier(); err != nil {
 						return "", err
 					}
@@ -236,7 +247,7 @@ func waitProcessState(t *testing.T, processes []*fixtureProcess, predicate func(
 }
 
 func TestProcessCrashRecovery(t *testing.T) {
-	for _, window := range []string{"before", "after", "shutdown"} {
+	for _, window := range []string{"before", "after", "shutdown", "dedup"} {
 		t.Run(window, func(t *testing.T) {
 			pool := testdb.Pool(t)
 			engine, err := durable.New(pool, processRegistry(t), durable.SystemClock{})
@@ -247,7 +258,8 @@ func TestProcessCrashRecovery(t *testing.T) {
 				t.Fatal(err)
 			}
 			if _, err := pool.Exec(t.Context(), `CREATE TABLE fixture_barriers (worker text PRIMARY KEY);
-				CREATE TABLE fixture_effects (worker text NOT NULL, step text NOT NULL)`); err != nil {
+				CREATE TABLE fixture_effects (worker text NOT NULL, step text NOT NULL, effect_key text UNIQUE);
+				CREATE TABLE fixture_deliveries (step text, effect_key text, attempt int, attempt_id text, workflow_id text, step_key text)`); err != nil {
 				t.Fatal(err)
 			}
 			execution, err := durable.Start(t.Context(), engine, processDefinition, "persisted input")
@@ -284,7 +296,11 @@ func TestProcessCrashRecovery(t *testing.T) {
 			} else {
 				workerA.kill(t)
 			}
-			workerB := startFixture(t, "worker", "worker-B", databaseURL, "", durable.Claim{})
+			recoveryWindow := ""
+			if window == "dedup" {
+				recoveryWindow = "dedup-recover"
+			}
+			workerB := startFixture(t, "worker", "worker-B", databaseURL, recoveryWindow, durable.Claim{})
 			waitProcessState(t, []*fixtureProcess{scheduler, workerB}, func() bool {
 				state, err := engine.Workflow(t.Context(), execution.ID)
 				return err == nil && state.State == durable.WorkflowCompleted
@@ -298,11 +314,18 @@ func TestProcessCrashRecovery(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantEffects := 1
-			if window != "before" {
+			if window != "before" && window != "dedup" {
 				wantEffects = 2
 			}
 			if effects != wantEffects {
 				t.Fatalf("effects = %d, want %d", effects, wantEffects)
+			}
+			if window == "dedup" {
+				var deliveries, keys, attempts, workflows, steps int
+				err := pool.QueryRow(t.Context(), `SELECT count(*), count(DISTINCT effect_key), count(DISTINCT attempt_id), count(DISTINCT workflow_id), count(DISTINCT step_key) FROM fixture_deliveries WHERE step='effect' AND workflow_id=$1 AND step_key='step-0' AND attempt IN (1,2)`, execution.ID).Scan(&deliveries, &keys, &attempts, &workflows, &steps)
+				if err != nil || deliveries != 2 || keys != 1 || attempts != 2 || workflows != 1 || steps != 1 {
+					t.Fatalf("deduplicated deliveries: %d keys=%d attempts=%d workflows=%d steps=%d err=%v", deliveries, keys, attempts, workflows, steps, err)
+				}
 			}
 			var states []string
 			rows, err := pool.Query(t.Context(), `SELECT state FROM attempts WHERE activity_id=$1 ORDER BY number`, stale.ActivityID)

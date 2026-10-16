@@ -44,6 +44,10 @@ func run() error {
 		return err
 	}
 	worker, err := durable.NewWorker(engine, durable.WorkerConfig{ID: "consumer", LeaseDuration: time.Second, HeartbeatInterval: 100 * time.Millisecond, PollInterval: time.Millisecond}, echo.Handle(func(ctx context.Context, input string) (string, error) {
+		metadata, ok := durable.Metadata(ctx)
+		if !ok || metadata.WorkflowID != execution.ID || metadata.StepKey == "" || metadata.AttemptNumber != 1 || metadata.EffectKey == "" {
+			return "", fmt.Errorf("invalid handler metadata: %#v", metadata)
+		}
 		if input == "hello" {
 			return input, nil
 		}
