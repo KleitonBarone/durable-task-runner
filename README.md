@@ -20,23 +20,19 @@ through Compose.
 ```sh
 git clone https://github.com/KleitonBarone/durable-task-runner.git
 cd durable-task-runner
-docker compose up -d --wait
-DATABASE_URL='postgres://durable:durable@localhost:54329/durable?sslmode=disable' go run ./cmd/example
+go run ./cmd/dev up
+go run ./cmd/dev example
 ```
 
-In PowerShell, replace the last line with:
-
-```powershell
-$env:DATABASE_URL = 'postgres://durable:durable@localhost:54329/durable?sslmode=disable'
-go run ./cmd/example
-```
+These commands also work in PowerShell. If Docker is installed only inside WSL,
+the development command uses the Ubuntu distribution automatically.
 
 The example runs a two-step customer welcome workflow and prints its execution
 timeline, ending in `workflow.completed`. Both handlers are local fakes; they do
 not create real accounts or send email. The example runs in one process and does
 not start a continuous scheduler.
 
-Stop PostgreSQL with `docker compose down`. Its development volume is preserved.
+Stop PostgreSQL with `go run ./cmd/dev down`. Its development volume is preserved.
 
 ## Use it in an application
 
@@ -78,9 +74,12 @@ compatible while executions are in progress.
 
 ## Development
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, focused tests, database checks,
-and the current verification limits. The [roadmap](ROADMAP.md) puts a reproducible
-development loop and process crash tests before further execution features.
+Run all checks with `go run ./cmd/dev check`. It starts disposable PostgreSQL,
+runs formatting, static analysis, unit and integration tests, kills and recovers
+real worker processes, runs the example, and removes its test containers.
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for focused tests, race checks, and debugging.
+See the [roadmap](ROADMAP.md) for the remaining work through v1.
 
 ## License
 

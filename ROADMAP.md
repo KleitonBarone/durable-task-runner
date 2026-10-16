@@ -1,7 +1,8 @@
 # Roadmap to v1
 
-This is the implementation plan for the first complete release. Only milestones
-0 and 1 are implemented. Every unchecked item below is planned work.
+This is the implementation plan for the first complete release. Milestones 0 and
+1 and the milestone 1A verification loop are implemented. Milestone 1B is next.
+Every unchecked item below is planned work.
 
 See the [delivery plan](docs/delivery-plan.md) for ordered commits, branches,
 verification before each push, draft PR checkpoints, and release publication.
@@ -61,20 +62,19 @@ See [ADR 0001](docs/decisions/0001-runtime-database-and-repository.md) and
 - [x] Heartbeat leases and recover abandoned attempts.
 - [x] Record transitions and expose an ordered execution timeline.
 
-The existing crash test simulates disappearance by withholding acknowledgement,
-advancing a manual clock, and calling recovery. It proves persistence behavior,
-including duplicate side effects. It does not kill a worker process or exercise
-the continuous worker and scheduler loops.
+The original crash test simulates disappearance by withholding acknowledgement,
+advancing a manual clock, and calling recovery. Milestone 1A adds real worker
+process crashes, scheduler restart, graceful shutdown, and controlled loop tests.
 
 ### Gaps found in the current implementation
 
 | Area | Evidence in the repository | Work required before v1 |
 | --- | --- | --- |
 | Installation | `go.mod` declares `github.com/kleiton/durable-task-runner`; Git origin is `github.com/KleitonBarone/durable-task-runner` | Choose the canonical module path and test installation from another module |
-| Local loop | Make recipes use POSIX shell syntax; PowerShell needs separate commands | One Go-based command interface, with Docker through WSL supported |
-| Database checks | The integration helper calls `t.Skip` when its database URL is absent | Explicit database checks must fail if their dependency is missing |
-| Test control | `ManualClock` controls timestamps; worker and scheduler tickers use real time | Controllable timers and direct coverage of the running loops |
-| Process recovery | Five database tests exercise starts, claims, heartbeat, recovery, and failure | Process crash, restart, shutdown, and failure-window coverage |
+| Local loop | `cmd/dev` runs from PowerShell or POSIX shells and selects Docker through WSL when needed | Implemented in 1A; keep CI and local commands aligned |
+| Database checks | Explicit integration runs require a reachable database; `check` provisions its own | Implemented in 1A; preserve failure on missing dependencies |
+| Test control | `ManualClock` controls timestamps and runtime tickers | Implemented in 1A; extend deterministic coverage with new transitions |
+| Process recovery | Separate worker/scheduler processes cover crashes before/after effects, shutdown, restart, and stale tokens | Implemented in 1A; extend the harness for retries, cancellation, and cleanup |
 | Worker behavior | Claims do not filter by registered handlers; `Worker.Run` returns on any handler error | Capability-aware claims and separate task outcomes from worker failures |
 | Failure acknowledgement | Completion/failure share a function that uses empty error text to mean success | Represent outcomes explicitly; an error with an empty message must still fail |
 | Integration | Activity names and inputs are connected by strings; outputs are stored but not passed to later steps | Typed step registration, stable step identity, result access, and complete consumer examples |
@@ -89,7 +89,7 @@ state-machine changes into one rewrite.
 
 | Order | Milestone | Result |
 | --- | --- | --- |
-| 1 | 1A. Development and verification | Reproducible checks, deterministic loop tests, process crash test |
+| 1 | 1A. Development and verification, complete | Reproducible checks, deterministic loop tests, process crash test |
 | 2 | 1B. Integration contract | Installable module, typed activities, usable results, resilient worker loop |
 | 3 | 2A. Retry and timeout control | Persisted policies, due times, finite attempt budgets, bounded ownership |
 | 4 | 2B. Cancellation | Transactional cancellation with defined races and cooperative handler shutdown |
@@ -100,19 +100,18 @@ state-machine changes into one rewrite.
 
 ## 1A. Establish the development loop first
 
-This is the next implementation work. Do not start milestone 2 features until this
-gate passes. Keep the existing module, PostgreSQL, and standard Go test tooling.
-No real third-party services are needed.
+This gate is complete. `go run ./cmd/dev check` runs the full local/CI loop and
+`go run ./cmd/dev race` checks concurrency. Keep this gate passing while extending
+the runtime. See [CONTRIBUTING.md](CONTRIBUTING.md) for commands and measured timings.
 
 ### Deliverables
 
-- [ ] Add a small `cmd/dev` command using the standard library. Check Go and
+- [x] Add a small `cmd/dev` command using the standard library. Check Go and
   Docker/Compose prerequisites, report actionable failures, and support Docker
   inside WSL on Windows. Avoid requiring Make or a POSIX shell for the main path.
-- [ ] Provide the following commands. These are proposed commands, not commands
-  available in the current checkout.
+- [x] Provide the following commands, available in the current checkout.
 
-| Proposed command prefix: `go run ./cmd/dev` | Contract |
+| Command prefix: `go run ./cmd/dev` | Contract |
 | --- | --- |
 | `doctor` | Check prerequisites, selected Docker endpoint, and conflicts; change no configuration |
 | `up` / `down` | Start or stop the named development database; preserve its data on shutdown |
@@ -122,26 +121,26 @@ No real third-party services are needed.
 | `check` | Create isolated PostgreSQL, wait for health, check formatting and vet, run unit/integration/e2e checks, then clean up |
 | `race` | Run concurrency-sensitive unit/integration tests with the race detector on a supported toolchain |
 
-- [ ] Make existing Make targets thin aliases where practical. Keep direct `go`
+- [x] Make existing Make targets thin aliases where practical. Keep direct `go`
   commands documented for debugging and preserve a fast unit-test path.
-- [ ] Give each full verification run a unique Compose project and temporary data,
+- [x] Give each full verification run a unique Compose project and temporary data,
   allocate available ports, and clean up only resources that run created. Keep it
   separate from `up` and from a caller-supplied database. No automatic volume reset.
-- [ ] Require a database URL for explicit tagged integration runs. Check connectivity
+- [x] Require a database URL for explicit tagged integration runs. Check connectivity
   before testing and use `-count=1`. Missing Docker or a missing database must fail,
   rather than produce a green run with skipped persistence tests.
-- [ ] Reuse the per-test schema helper. Bound setup, queries, waits, and cleanup;
+- [x] Reuse the per-test schema helper. Bound setup, queries, waits, and cleanup;
   register cleanup immediately after resource creation. Preserve useful diagnostics
   when a scenario fails.
-- [ ] Add a small controllable timer/ticker dependency for worker and scheduler loops.
+- [x] Add a small controllable timer/ticker dependency for worker and scheduler loops.
   Keep persisted-time and waiting behavior explicit. Use channels or barriers to
   coordinate tests; wall-clock deadlines detect hung tests.
-- [ ] Add external-package tests using only public APIs. Exercise `Worker.RunOnce`,
+- [x] Add external-package tests using only public APIs. Exercise `Worker.RunOnce`,
   `Worker.Run`, and `Scheduler.Run`, heartbeat loss, handler failure, and shutdown.
   Assert workflow, activity, attempt, lease, and history consistency together.
-- [ ] Add the process harness below. Keep test-only barriers and failure injection
+- [x] Add the process harness below. Keep test-only barriers and failure injection
   in test/example binaries rather than the public runtime API.
-- [ ] Make CI use the same checks, fail if required suites do not execute, enforce
+- [x] Make CI use the same checks, fail if required suites do not execute, enforce
   job timeouts, and retain sanitized process logs and timelines on failure. Run race
   checks on Linux and native Windows command/setup checks. Test the declared minimum
   Go version as well as the selected development version.
@@ -167,15 +166,15 @@ use sleeps as evidence of a transition; wait for barriers or bounded state predi
 
 ### Exit gate
 
-- [ ] From a clean checkout, one command runs all required checks and cleans up on
+- [x] From a clean checkout, one command runs all required checks and cleans up on
   success and failure. Record cold/warm durations in contributor docs; target a warm
   unit loop under five seconds and a warm full check under two minutes.
-- [ ] A missing dependency, failed child process, or unmet state assertion returns
+- [x] A missing dependency, failed child process, or unmet state assertion returns
   nonzero with enough information to reproduce the failure.
-- [ ] Concurrent claims and recovery pass 20 targeted repetitions locally; use
+- [x] Concurrent claims and recovery pass 20 targeted repetitions locally; use
   bounded repetitions in CI. Process tests pass repeatedly without timing guesses
   or orphan processes.
-- [ ] README instructions succeed on a clean environment. Contributor docs give
+- [x] README instructions succeed on a clean environment. Contributor docs give
   commands for focused runs, the full gate, failure reproduction, and cleanup.
 
 Suggested PRs: command runner and dependency lifecycle; controllable loop tests;
@@ -459,6 +458,5 @@ state-machine ADR, SQL constraints, tests, and user docs together when semantics
 change. Introduce verification before the feature it must verify, then extend it
 at each milestone.
 
-The next action is milestone 1A, starting with the command runner and isolated
-database lifecycle. This planning update does not implement those commands or any
-milestone 2 or later behavior.
+The next action is milestone 1B after review and merge of the development-loop PR.
+Milestone 2 and later execution features remain unimplemented.

@@ -2,19 +2,23 @@
 
 This is the commit and push sequence for [ROADMAP.md](../ROADMAP.md). The roadmap
 defines scope and acceptance criteria; this document defines how to deliver that
-scope. Every item here is pending. Creating this plan does not execute Git actions.
+scope. Commits 00 through 06 implement the planning baseline and milestone 1A on
+`build/dev-loop`, reviewed in [draft PR #1](https://github.com/KleitonBarone/durable-task-runner/pull/1).
+Milestone 1B and later batches remain pending. The first PR still needs its merge
+checkpoint before the next batch begins.
 
-## Starting point
+## Planning baseline
 
-- Current branch: `main`.
-- Current local HEAD: `b49b246`, `feat: add durable execution with lease recovery`.
+- Base branch: `main`.
+- Base local HEAD: `b49b246`, `feat: add durable execution with lease recovery`.
 - Remote: `origin`, `https://github.com/KleitonBarone/durable-task-runner.git`.
 - Pending documentation: `README.md`, `ROADMAP.md`, `CONTRIBUTING.md`,
   `docs/integration.md`, and this delivery plan.
 - Implemented scope: milestones 0 and 1. The proposed development commands,
   process harness, and later runtime features are not implemented.
 
-Recheck these facts before execution. Keep unrelated changes out of the commits.
+These facts describe the checkout before commit 00. Recheck Git state at each
+checkpoint and keep unrelated changes out of commits.
 
 ## Commit, push, and review rules
 
@@ -57,12 +61,12 @@ default; split it when its changes need independent review.
 | --- | --- |
 | D | Review current-behavior claims, resolve relative links, run `git diff --check`, and exercise changed runnable examples when applicable |
 | B | Existing formatting check, both `go vet` configurations, unit tests, uncached PostgreSQL integration tests with an explicit URL, and the example when affected |
-| C | Proposed `go run ./cmd/dev check`, covering formatting, vet, unit tests, uncached PostgreSQL tests, and process end-to-end scenarios |
-| R | Proposed `go run ./cmd/dev race` on a supported Linux/C toolchain, plus targeted repeated concurrency/recovery tests |
+| C | `go run ./cmd/dev check`, covering formatting, vet, unit tests, uncached PostgreSQL tests, process scenarios, and the example |
+| R | `go run ./cmd/dev race`, using Linux/C tooling or the Windows container path, plus targeted repeated concurrency/recovery tests |
 | X | A separate consumer module using public APIs; use a local checkout during development, a pushed commit for remote installation, and a candidate tag during release |
 
-`C` and `R` become available in batch 1A. Until then, use `B` plus focused tests for
-new tooling. Use `D` for documentation-only commits. At a batch boundary run all
+`C` and `R` are implemented in batch 1A. Its earlier commits used `B` plus focused
+tests for new tooling. Use `D` for documentation-only commits. At a batch boundary run all
 applicable gates, including race checks for runtime/concurrency changes. CI must
 report the required suites actually executed; skips cannot satisfy a database gate.
 
@@ -100,8 +104,10 @@ Push every numbered commit after its checks. Keep the PR draft until all 1A exit
 criteria pass. Deliberately break the database configuration and a child process
 once to verify the full command fails and still cleans up.
 
-Stop here if the one-command loop or process recovery is unreliable. Fix that gate
-before beginning integration changes or milestone 2 work.
+This gate passes locally and in CI. Twenty targeted repetitions passed, including
+all three process scenarios. Linux Go 1.24/1.26 checks, the Linux race job, and native
+Windows tooling checks passed on `d00254a`. Commit 06 updates the docs and roadmap;
+the PR must also be green on its final SHA before the merge checkpoint.
 
 ## Batch 1B. Finish the public integration contract
 

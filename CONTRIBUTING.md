@@ -1,145 +1,166 @@
 # Development
 
-The repository currently implements milestones 0 and 1. Read
-[ROADMAP.md](ROADMAP.md) before starting a feature. Milestone 1A is the next gate:
-make local verification reproducible and add real process crash coverage before
-extending the execution model.
+Milestones 0 and 1 and the milestone 1A verification loop are implemented.
+[ROADMAP.md](ROADMAP.md) defines the remaining behavior and its acceptance gates.
 
-This page describes commands available today. The proposed `cmd/dev` commands in
-the roadmap do not exist yet.
+## Start with one command
 
-## Requirements
-
-- Go 1.24 or later.
-- Docker with Compose for PostgreSQL integration tests and the example.
-- Make and a POSIX shell if using the Make targets. Make is optional.
-
-Start the local PostgreSQL 17 dependency:
+Install Go 1.24 or later and Docker with Compose, then run:
 
 ```sh
-docker compose up -d --wait
+go run ./cmd/dev check
 ```
 
-It publishes port 54329 and uses a named development volume. If that port is busy,
-inspect the conflict before starting another instance. Tests should use a disposable
-local database, never a live application database. The test role needs permission
-to create and drop schemas.
+This checks formatting, runs static analysis for unit/integration/process code,
+runs uncached unit and PostgreSQL tests, exercises real process recovery, and runs
+the example. It provisions its own PostgreSQL 17 container with an available
+loopback port and temporary data, then removes that container on success or failure.
+It does not use the named development database or a configured application URL.
 
-If Docker lives in WSL rather than Windows, run Compose from the repository's WSL
-directory. For example:
+Make is optional. Its targets are aliases for these Go commands.
 
-```powershell
-wsl -d Ubuntu --cd /mnt/c/Users/admin/repos/durable-task-runner --exec docker compose up -d --wait
+Check prerequisites with:
+
+```sh
+go run ./cmd/dev doctor
 ```
 
-Run the Go commands below from PowerShell. Replace the WSL distribution and
-repository path to match your machine.
+The output shows Go, the Docker endpoint, daemon/Compose versions, and containers
+publishing the development port, 54329. The first run needs network access to fetch
+Go dependencies and Docker images.
 
 ## Fast loop
 
-Unit tests do not need PostgreSQL:
+Unit tests do not need Docker. Pass ordinary Go test arguments for selection:
 
 ```sh
-go test ./...
-go test -run TestStateTransitions -count=1 .
+go run ./cmd/dev test
+go run ./cmd/dev test -run TestStateTransitions .
+go run ./cmd/dev fmt
+go run ./cmd/dev lint
 ```
 
-Before handing off code changes, format and analyze both build configurations:
+The non-mutating formatting check is `go run ./cmd/dev fmt-check`. Direct
+`gofmt -w .`, `go vet ./...`, and `go test ./...` remain useful when debugging.
+
+## Keep a local example database
 
 ```sh
-gofmt -w .
-go vet ./...
-go vet -tags=integration ./...
+go run ./cmd/dev up
+go run ./cmd/dev example
+go run ./cmd/dev down
 ```
 
-`gofmt -l .` should print nothing afterward. `make fmt-check` checks formatting
-without changing files.
+`up` uses `compose.yaml` and the named `durable-task-runner` project on
+`127.0.0.1:54329`. `down` preserves its named volume. The example prints nine events,
+ending with `workflow.completed`; both activity handlers are local fakes.
 
-## Database checks
+`DATABASE_URL` overrides the example's local default. The full `check` command
+always supplies its own temporary database. Do not reset development volumes as
+routine test cleanup.
+
+## Focus database tests
+
+Explicit integration runs require `DURABLE_TEST_DATABASE_URL`. A missing URL or
+unreachable database fails instead of skipping tests. Use a disposable local
+database; the role must be able to create and drop schemas.
+
+In PowerShell, after starting the development dependency:
+
+```powershell
+$env:DURABLE_TEST_DATABASE_URL = 'postgres://durable:durable@localhost:54329/durable?sslmode=disable'
+go run ./cmd/dev integration -run TestConcurrentClaims -count=20 .
+```
 
 In a POSIX shell:
 
 ```sh
 export DURABLE_TEST_DATABASE_URL='postgres://durable:durable@localhost:54329/durable?sslmode=disable'
-go test -count=1 -tags=integration ./...
-go test -count=20 -tags=integration -run 'TestConcurrentClaims|TestWorkerCrash' .
+go run ./cmd/dev integration -run TestConcurrentClaims -count=20 .
 ```
 
-In PowerShell:
+The equivalent direct command is `go test -count=1 -tags=integration ./...`.
+Each test owns a unique schema and drops only that schema.
+
+## Process tests and race detection
+
+```sh
+go run ./cmd/dev e2e
+go run ./cmd/dev e2e -run TestProcessCrashRecovery -count=3 .
+go run ./cmd/dev race
+```
+
+`e2e` provisions an isolated database. A parent test starts worker and scheduler
+processes, synchronizes on persisted barriers, and kills a worker before or after
+its fake side effect. It verifies abandoned/completed attempts, duplicate delivery,
+stale-token rejection, the next step, scheduler restart, and persistence through a
+new connection. A third scenario checks graceful shutdown during an activity.
+
+The harness also injects a failed child to verify failure reporting. Subprocesses
+have deadlines and cleanup; their output is attached to a failed test. Precise
+expiry/heartbeat boundaries belong to manual-clock tests, not timing sleeps.
+
+`race` also creates an isolated database. Linux needs a C compiler. On Windows it
+uses a disposable `golang:1.24-bookworm` container with read-only source and Go
+module cache mounts, so a Windows C compiler is unnecessary. Host Go downloads and
+verifies dependencies first. All test effects are local deterministic fakes.
+
+For the milestone 1A stress gate, this combines selected database and process cases
+in one isolated run. Quoting the complete flags works in both shells:
+
+```sh
+go run ./cmd/dev e2e '-tags=integration,e2e' '-run=TestConcurrentClaims|TestWorkerCrash|TestProcessCrashRecovery|TestWorkerLeaseLoss|TestSchedulerRun' -count=20 -timeout=5m .
+```
+
+## Windows and WSL
+
+When Windows Docker is absent, commands use Docker in WSL Ubuntu. Set
+`DURABLE_WSL_DISTRO` to select another distribution. Paths stay individual
+arguments, including repository paths containing spaces.
+
+Verification keeps a scoped foreground WSL process alive while native Windows Go
+runs, then releases it after cleanup. This avoids WSL stopping Docker's systemd
+service during a long native test run. For a persistent manual development session,
+keep a WSL terminal open if your distribution otherwise stops idle services.
+
+No command changes Docker contexts, daemon settings, or WSL configuration.
+Test databases use the existing bridge network and temporary loopback ports.
+
+## CI and failure diagnosis
+
+CI runs the same `check` command on Linux with Go 1.24 and 1.26. It repeats process
+recovery and runs a separate race job with repeated claim/recovery cases. Native
+Windows checks formatting, static analysis, unit tests, and command/WSL selection.
+
+To retain local command output in ignored `artifacts/`:
 
 ```powershell
-$env:DURABLE_TEST_DATABASE_URL = 'postgres://durable:durable@localhost:54329/durable?sslmode=disable'
-go test -count=1 -tags=integration ./...
-go test -count=20 -tags=integration -run 'TestConcurrentClaims|TestWorkerCrash' .
+$env:DURABLE_TEST_ARTIFACT_DIR = 'artifacts'
+go run ./cmd/dev check
 ```
 
-The integration helper currently skips database tests if the URL is missing. Set
-it explicitly; a green tagged run without it does not prove persistence works.
-Use `-v` to see individual test outcomes when diagnosing an unexpected skip.
+For POSIX shells, prefix the command with `DURABLE_TEST_ARTIFACT_DIR=artifacts`.
+CI uploads these logs when a job fails. Process failures include child output and
+successful recovery scenarios print the ordered timeline.
 
-Each test creates and drops a unique schema. Tests use the real database for
-locking and transactions, with a manual clock for exact lease boundaries.
-They do not use third-party services.
+For the persistent dependency, inspect `docker compose ps` and
+`docker compose logs postgres` through your selected Docker installation. For test
+failures, use a focused selector and inspect the assertion before changing timeouts.
+Never point these checks at a live application database.
 
-## Full current check
+## Verification timings
 
-With Make and a POSIX shell, after starting PostgreSQL:
-
-```sh
-make check
-make example
-```
-
-`make check` checks formatting, runs vet for both build configurations, then runs
-unit and database tests. It does not provision PostgreSQL or test separate processes.
-It uses the Make `DATABASE_URL` setting for integration tests, defaulting to the
-local Compose database.
-
-Without Make, run the formatting check, both vet commands, unit tests, and the
-uncached tagged tests above. Then run the example in PowerShell:
-
-```powershell
-$env:DATABASE_URL = $env:DURABLE_TEST_DATABASE_URL
-go run ./cmd/example
-```
-
-In a POSIX shell, use `DATABASE_URL="$DURABLE_TEST_DATABASE_URL" go run ./cmd/example`.
-The example should print nine events ending with `workflow.completed`.
-
-For concurrency changes, on a toolchain with race-detector support and a C compiler:
-
-```sh
-go test -race -count=1 -tags=integration ./...
-```
-
-CI currently runs formatting, vet, unit tests, and PostgreSQL integration tests on
-Linux. An automated race job, native Windows setup checks, and process end-to-end
-tests are planned in milestone 1A; they are not part of today's CI gate.
-
-## Failure diagnosis and cleanup
-
-For database startup failures, inspect `docker compose ps` and
-`docker compose logs postgres`. Add `-v -count=1` and a focused `-run` selector to
-reproduce a failing test. Test clock advancement should drive expiry assertions;
-do not add sleeps to make a race disappear.
-
-Docker's `all predefined address pools have been fully subnetted` error means it
-cannot allocate a Compose network. Report that environment failure before changing
-daemon settings or removing shared networks; it is not a failed engine assertion.
-
-Stop the local dependency with:
-
-```sh
-docker compose down
-```
-
-This preserves the development volume. Do not delete that volume as routine test
-cleanup. The forthcoming isolated verification runner must own and clean up its
-own resources without resetting this database.
+On Windows amd64 with Go 1.26.5 and Docker through WSL, the warm unit loop took
+2.5 seconds and a warm full check took 23.4 seconds. The first Linux Go 1.26 CI
+check took 42 seconds after setup-go reported no dependency/build cache. The
+targeted stress gate passed 20 repetitions in 149 seconds,
+including all three process scenarios per repetition. These are observed timings,
+not performance guarantees. Docker image and Go module downloads add to first-run
+time. CI provides independent clean-run timing for both supported Go versions.
 
 ## Changing behavior
 
-Keep transition code, SQL constraints, history events, and their tests consistent.
-Record execution-semantics changes in an ADR. Update the roadmap only when the
-acceptance scenario passes, and keep the README focused on evaluating and trying
-the project.
+Keep transition code, SQL constraints, history events, and focused tests consistent.
+Record execution-semantics changes in an ADR. Complete roadmap checkboxes only
+after their acceptance scenarios pass. Keep the README aimed at people evaluating
+and trying the project.
