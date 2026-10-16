@@ -164,6 +164,10 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any, op
 }
 
 func (e *Engine) ClaimActivity(ctx context.Context, workerID string, leaseDuration time.Duration) (Claim, error) {
+	return e.claimActivity(ctx, workerID, leaseDuration, nil)
+}
+
+func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDuration time.Duration, capabilities map[string]string) (Claim, error) {
 	if workerID == "" {
 		return Claim{}, fmt.Errorf("worker id is required")
 	}
@@ -180,14 +184,16 @@ func (e *Engine) ClaimActivity(ctx context.Context, workerID string, leaseDurati
 
 	var claim Claim
 	var currentState ActivityState
+	names, contracts := capabilityArrays(capabilities)
 	err = tx.QueryRow(ctx, `
 		SELECT a.id, a.workflow_id, a.name, a.input, a.attempt_count, a.state, a.step_key, a.position
 		FROM activities a
 		JOIN workflow_executions w ON w.id = a.workflow_id
 		WHERE a.state = 'ready' AND w.state = 'running'
+		  AND ($1::boolean OR (a.name, a.contract) IN (SELECT * FROM unnest($2::text[], $3::text[])))
 		ORDER BY a.created_at, a.workflow_id, a.position
 		FOR UPDATE OF a SKIP LOCKED
-		LIMIT 1`).Scan(
+		LIMIT 1`, capabilities == nil, names, contracts).Scan(
 		&claim.ActivityID, &claim.WorkflowID, &claim.ActivityName, &claim.ActivityInput,
 		&claim.AttemptNumber, &currentState, &claim.StepKey, &claim.Position,
 	)

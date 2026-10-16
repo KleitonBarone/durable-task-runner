@@ -102,11 +102,16 @@ if err != nil {
 return scheduler.Run(ctx)
 ```
 
-All workers against the same engine tables must currently support the same set of
-activity names. Claims do not filter by registered handlers. A missing handler
-fails claimed work. A handler error records workflow failure, and `Worker.Run`
-returns the error, stopping that loop. The hosting application must decide how to
-restart it. A scheduler/database error also returns to its caller.
+Workers claim only activity names and type contracts matching their registered
+handlers. Other work stays ready. Different worker processes can handle different
+activity sets. `Worker.UnsupportedActivities(ctx)` lists up to 100 unsupported
+ready types and their counts for this worker. It does not prove that no other
+worker can process them. The low-level `Engine.ClaimActivity` is deliberately
+unfiltered for applications implementing their own worker protocol.
+
+A handler error records workflow failure, and `Worker.Run` currently returns the
+error, stopping that loop. The hosting application must decide how to restart it.
+A scheduler/database error also returns to its caller.
 
 Cancellation of the process context asks a handler to stop. Shutdown does not
 record workflow cancellation or immediately release its lease; recovery follows

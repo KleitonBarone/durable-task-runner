@@ -15,9 +15,10 @@ type WorkerConfig struct {
 }
 
 type Worker struct {
-	engine   *Engine
-	config   WorkerConfig
-	handlers map[string]Handler
+	engine       *Engine
+	config       WorkerConfig
+	handlers     map[string]Handler
+	capabilities map[string]string
 }
 
 func NewWorker(engine *Engine, config WorkerConfig, registrations ...HandlerRegistration) (*Worker, error) {
@@ -36,6 +37,9 @@ func NewWorker(engine *Engine, config WorkerConfig, registrations ...HandlerRegi
 	if config.PollInterval <= 0 {
 		return nil, fmt.Errorf("poll interval must be positive")
 	}
+	if len(registrations) == 0 {
+		return nil, fmt.Errorf("at least one handler is required")
+	}
 	handlers := make(map[string]Handler, len(registrations))
 	contracts := make(map[string]string, len(registrations))
 	for _, registration := range registrations {
@@ -51,13 +55,13 @@ func NewWorker(engine *Engine, config WorkerConfig, registrations ...HandlerRegi
 	if err := engine.registry.bindActivities(contracts); err != nil {
 		return nil, err
 	}
-	return &Worker{engine: engine, config: config, handlers: handlers}, nil
+	return &Worker{engine: engine, config: config, handlers: handlers, capabilities: contracts}, nil
 }
 
 // RunOnce claims at most one activity and waits for its handler to finish. It
 // heartbeats while the handler runs and fences completion if ownership is lost.
 func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
-	claim, err := w.engine.ClaimActivity(ctx, w.config.ID, w.config.LeaseDuration)
+	claim, err := w.engine.claimActivity(ctx, w.config.ID, w.config.LeaseDuration, w.capabilities)
 	if errors.Is(err, ErrNoActivity) {
 		return false, nil
 	}

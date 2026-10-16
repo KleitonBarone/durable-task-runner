@@ -58,3 +58,10 @@ deduplication must commit its key with its effect in the effect's own system.
 The process fixture kills a worker after that commit and proves two deliveries
 use one key and produce one effect. A separate fixture still demonstrates two
 effects when the application does not deduplicate. Delivery remains at least once.
+
+Built-in workers filter claim selection by the pair of persisted activity name
+and Go type contract. Unsupported work stays ready without creating an attempt.
+Each process may register a different handler set. A bounded diagnostic query
+groups unsupported ready work from one worker's perspective. Low-level unfiltered
+claiming remains available for custom runtimes, which must enforce their own
+capability rules.
