@@ -48,3 +48,15 @@ func containsNUL(value any) bool {
 	}
 	return false
 }
+
+// Failure messages are diagnostic text, bounded separately from JSON payloads.
+func failureMessage(err error) string {
+	message := strings.ReplaceAll(strings.ToValidUTF8(err.Error(), "\uFFFD"), "\x00", "\\u0000")
+	if len(message) > 16*1024 {
+		message = message[:16*1024]
+		for !utf8.ValidString(message) {
+			message = message[:len(message)-1]
+		}
+	}
+	return message
+}

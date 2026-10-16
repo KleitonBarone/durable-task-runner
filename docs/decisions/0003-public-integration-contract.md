@@ -65,3 +65,19 @@ Each process may register a different handler set. A bounded diagnostic query
 groups unsupported ready work from one worker's perspective. Low-level unfiltered
 claiming remains available for custom runtimes, which must enforce their own
 capability rules.
+
+A successfully recorded handler failure returns `TaskError` from `RunOnce`.
+`Run` continues to unrelated executions and treats cooperative lease loss as a
+normal ownership outcome. Runtime connection/shutdown/transaction errors use five
+bounded exponential reconnect waits, from 100 ms to 1600 ms, with a six-failure
+limit. Successful operations reset that budget. Persistent SQL/configuration
+errors return immediately. No handler retry policy is introduced here.
+
+Each worker instance invokes at most one handler at a time. Shutdown and lease
+loss cancel its context and wait a bounded grace period. An unresponsive handler
+stops the loop and blocks reuse of that instance until it returns. Late results
+are discarded; ownership is recovered through leases. Database operations and
+connection establishment have time bounds. Worker and scheduler health describes
+their local Run loops and exposes runtime errors without storing task failures
+as infrastructure failures. Zero options select documented defaults; negative
+or lease-incompatible durations are rejected.

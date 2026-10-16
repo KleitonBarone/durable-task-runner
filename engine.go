@@ -32,7 +32,14 @@ func New(pool *pgxpool.Pool, registry *Registry, clock Clock) (*Engine, error) {
 }
 
 func Open(ctx context.Context, databaseURL string, registry *Registry, clock Clock) (*Engine, error) {
-	pool, err := pgxpool.New(ctx, databaseURL)
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("configure PostgreSQL: %w", err)
+	}
+	if config.ConnConfig.ConnectTimeout == 0 {
+		config.ConnConfig.ConnectTimeout = 5 * time.Second
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("open PostgreSQL: %w", err)
 	}
@@ -333,7 +340,7 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 	}
 
 	if activityErr != nil {
-		errorText := activityErr.Error()
+		errorText := failureMessage(activityErr)
 		if err := ValidateActivityTransition(activityState, ActivityFailed); err != nil {
 			return err
 		}

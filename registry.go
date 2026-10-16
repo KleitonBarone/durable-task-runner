@@ -165,9 +165,8 @@ func Handle[Input, Output any](name string, handler func(context.Context, Input)
 	return HandlerRegistration{
 		Name: name,
 		Handler: func(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
-			if err := validatePayload(raw); err != nil {
-				return nil, err
-			}
+			// Persisted input has already passed validation. jsonb can add
+			// whitespace, so its returned byte size is not the original limit.
 			var input Input
 			if err := json.Unmarshal(raw, &input); err != nil {
 				return nil, fmt.Errorf("%w: decode activity %q input: %w", ErrInvalidInput, name, err)

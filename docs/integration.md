@@ -79,9 +79,13 @@ Compose credentials in this repository are for local development.
 ## Run workers and one scheduler
 
 Register handlers with `durable.Handle`. `durable.NewWorker` takes an engine,
-configuration, and registrations. The example shows all required configuration
-fields. Lease duration, heartbeat interval, and poll interval must be positive;
-the heartbeat interval must be shorter than the lease duration.
+configuration, and registrations. Only the worker ID and at least one handler are
+required. Zero configuration values select defaults: a 30-second lease, heartbeat
+at one third of the lease, 100 ms polling, database operations bounded by the
+smaller of five seconds or one third of the lease, and five seconds to stop a
+handler. Negative values are rejected. Database timeout plus heartbeat interval
+must fit within the lease. The scheduler defaults to one-second polling and
+100 recoveries per batch when configured with zeros.
 
 - `Worker.RunOnce(ctx)` claims at most one activity and waits for its handler while
   heartbeating. It returns `false, nil` when no work is available.
@@ -109,14 +113,35 @@ ready types and their counts for this worker. It does not prove that no other
 worker can process them. The low-level `Engine.ClaimActivity` is deliberately
 unfiltered for applications implementing their own worker protocol.
 
-A handler error records workflow failure, and `Worker.Run` currently returns the
-error, stopping that loop. The hosting application must decide how to restart it.
-A scheduler/database error also returns to its caller.
+`RunOnce` returns `TaskError` after recording a handler failure. Its cause remains
+available through `errors.Is` and `errors.As`. `Worker.Run` continues to other
+executions after recorded failures and cooperative lease loss. A panic or Goexit
+in the handler goroutine records `HandlerPanicError`. Failure text is normalized
+to UTF-8, escapes NUL, and is limited to 16 KiB in storage.
 
-Cancellation of the process context asks a handler to stop. Shutdown does not
-record workflow cancellation or immediately release its lease; recovery follows
-lease expiry. A handler that ignores its context may keep running after lease loss.
-There is no hard execution timeout yet.
+Worker and scheduler `Run` loops retry transient connection errors, operation
+deadlines, PostgreSQL shutdown, serialization failures, and deadlocks. Five
+consecutive reconnect waits use 100, 200, 400, 800, and 1600 ms delays; the sixth
+failure returns. A successful operation resets this budget. Authentication,
+schema, and other persistent SQL errors return immediately. These are runtime
+reconnects, not activity retries. Failed acknowledgements remain subject to lease
+recovery. `Health()` exposes local running/healthy state, consecutive runtime
+failures, last runtime error, and last successful operation time. Before `Run`
+starts and after it stops, health is false. It does not describe the worker fleet.
+
+Cancellation of the process context asks the active handler to stop and waits for
+its configured grace period. Shutdown does not record workflow cancellation or
+release its lease; recovery follows expiry. An unresponsive handler returns
+`ErrHandlerUnresponsive` and prevents that worker instance from invoking another
+handler until the old one returns. Check this error before treating a joined
+`context.Canceled` as clean shutdown. A process can still exit, and Go cannot kill
+an individual handler goroutine. There is no hard activity timeout yet.
+
+Use one `Run` loop per worker instance. Concurrent `Run`/`RunOnce` calls are
+rejected with `ErrWorkerBusy`. Stop runtime loops and wait for them before closing
+an owned pool. `Open` defaults connection establishment to five seconds unless
+the connection string specifies its own timeout. Caller-supplied pools remain
+caller-owned.
 
 ## Make side effects safe to repeat
 

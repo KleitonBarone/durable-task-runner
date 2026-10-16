@@ -100,7 +100,7 @@ func TestTypedPlanPersistsStepIdentity(t *testing.T) {
 }
 
 func TestHandlerFailuresRemainFailures(t *testing.T) {
-	for _, kind := range []string{"empty", "panic", "exit"} {
+	for _, kind := range []string{"empty", "panic", "exit", "nul"} {
 		t.Run(kind, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -110,6 +110,9 @@ func TestHandlerFailuresRemainFailures(t *testing.T) {
 				t.Fatal(err)
 			}
 			cause := errors.New("")
+			if kind == "nul" {
+				cause = errors.New("message with \x00 NUL")
+			}
 			worker, err := NewWorker(engine, WorkerConfig{ID: "failure", LeaseDuration: time.Minute, HeartbeatInterval: time.Second, PollInterval: time.Millisecond}, Handle("step_1", func(context.Context, integrationInput) (string, error) {
 				switch kind {
 				case "panic":
@@ -127,7 +130,7 @@ func TestHandlerFailuresRemainFailures(t *testing.T) {
 				t.Fatalf("lost error: %v", err)
 			}
 			var panicErr *HandlerPanicError
-			if kind != "empty" && !errors.As(err, &panicErr) {
+			if (kind == "panic" || kind == "exit") && !errors.As(err, &panicErr) {
 				t.Fatalf("panic outcome: %v", err)
 			}
 			result, err := engine.Workflow(ctx, execution.ID)
@@ -142,11 +145,42 @@ func TestHandlerFailuresRemainFailures(t *testing.T) {
 			if err != nil || len(attempts) != 1 || attempts[0].State != AttemptFailed {
 				t.Fatalf("attempts: %#v %v", attempts, err)
 			}
+			if kind == "nul" && attempts[0].Error != `message with \u0000 NUL` {
+				t.Fatalf("failure text: %q", attempts[0].Error)
+			}
 			var active int
 			if err := engine.pool.QueryRow(ctx, `SELECT count(*) FROM leases WHERE state = 'active'`).Scan(&active); err != nil || active != 0 {
 				t.Fatalf("active leases: %d %v", active, err)
 			}
 		})
+	}
+}
+
+func TestStoredJSONWhitespaceDoesNotInvalidateInputLimit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	engine, _ := newIntegrationEngine(t, SystemClock{}, 1)
+	definition := Define("large-input", func(input []int) ([]ActivitySpec, error) {
+		step, err := NewActivity("length", input)
+		return []ActivitySpec{step}, err
+	})
+	if err := Register(engine.registry, definition); err != nil {
+		t.Fatal(err)
+	}
+	execution, err := Start(ctx, engine, definition, make([]int, 350000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := NewWorker(engine, WorkerConfig{ID: "large-input"}, Handle("length", func(_ context.Context, input []int) (int, error) { return len(input), nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := worker.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.Workflow(ctx, execution.ID)
+	if err != nil || result.State != WorkflowCompleted || string(result.Output) != "350000" {
+		t.Fatalf("large input result: %s %v", result.State, err)
 	}
 }
 
