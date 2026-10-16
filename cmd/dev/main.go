@@ -57,7 +57,7 @@ func repositoryRoot() (string, error) {
 
 func (a *app) run(ctx context.Context, args []string) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
-		fmt.Println("Usage: go run ./cmd/dev <doctor|up|down|test|integration|check|fmt|fmt-check|lint> [go test arguments]")
+		fmt.Println("Usage: go run ./cmd/dev <doctor|up|down|test|integration|e2e|check|fmt|fmt-check|lint> [go test arguments]")
 		return nil
 	}
 	switch args[0] {
@@ -101,6 +101,10 @@ func (a *app) run(ctx context.Context, args []string) error {
 		return err
 	case "integration":
 		return a.integration(ctx, a.getenv("DURABLE_TEST_DATABASE_URL"), args[1:])
+	case "e2e":
+		return a.withDatabase(ctx, func(ctx context.Context, url string) error {
+			return a.processTests(ctx, url, args[1:])
+		})
 	case "check":
 		for _, check := range []string{"fmt-check", "lint", "test"} {
 			if err := a.run(ctx, []string{check}); err != nil {
@@ -108,7 +112,10 @@ func (a *app) run(ctx context.Context, args []string) error {
 			}
 		}
 		return a.withDatabase(ctx, func(ctx context.Context, url string) error {
-			return a.integration(ctx, url, nil)
+			if err := a.integration(ctx, url, nil); err != nil {
+				return err
+			}
+			return a.processTests(ctx, url, nil)
 		})
 	case "fmt":
 		_, err := a.command(ctx, "gofmt", "-w", ".")
