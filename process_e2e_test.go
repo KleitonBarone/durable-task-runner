@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
+	durable "github.com/KleitonBarone/durable-task-runner"
+	"github.com/KleitonBarone/durable-task-runner/internal/testdb"
 	"github.com/jackc/pgx/v5/pgxpool"
-	durable "github.com/kleiton/durable-task-runner"
-	"github.com/kleiton/durable-task-runner/internal/testdb"
 )
 
 var processDefinition = durable.Define("process-recovery", func(input string) ([]durable.ActivitySpec, error) {

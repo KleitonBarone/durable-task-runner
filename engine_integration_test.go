@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kleiton/durable-task-runner/internal/testdb"
+	"github.com/KleitonBarone/durable-task-runner/internal/testdb"
 )
 
 type integrationInput struct {

@@ -10,8 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	durable "github.com/kleiton/durable-task-runner"
-	"github.com/kleiton/durable-task-runner/internal/testdb"
+	durable "github.com/KleitonBarone/durable-task-runner"
+	"github.com/KleitonBarone/durable-task-runner/internal/testdb"
 )
 
 type observedClock struct {

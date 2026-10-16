@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	durable "github.com/kleiton/durable-task-runner"
+	durable "github.com/KleitonBarone/durable-task-runner"
 )
 
 type welcomeInput struct {
