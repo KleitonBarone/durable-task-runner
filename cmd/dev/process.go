@@ -16,6 +16,7 @@ type command struct {
 	args  []string
 	dir   string
 	env   []string
+	input string
 	quiet bool
 }
 
@@ -29,6 +30,7 @@ func (r executor) run(ctx context.Context, c command) (string, error) {
 	cmd := exec.CommandContext(ctx, c.name, c.args...)
 	cmd.Dir = c.dir
 	cmd.Env = append(os.Environ(), c.env...)
+	cmd.Stdin = strings.NewReader(c.input)
 	cmd.WaitDelay = 5 * time.Second
 	var output bytes.Buffer
 	cmd.Stdout = &output

@@ -57,7 +57,7 @@ func repositoryRoot() (string, error) {
 
 func (a *app) run(ctx context.Context, args []string) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
-		fmt.Println("Usage: go run ./cmd/dev <doctor|test|fmt|fmt-check|lint> [go test arguments]")
+		fmt.Println("Usage: go run ./cmd/dev <doctor|up|down|test|integration|check|fmt|fmt-check|lint> [go test arguments]")
 		return nil
 	}
 	switch args[0] {
@@ -86,6 +86,30 @@ func (a *app) run(ctx context.Context, args []string) error {
 		}
 		_, err := a.command(ctx, "go", arguments...)
 		return err
+	case "up", "down":
+		docker, err := a.docker(ctx)
+		if err != nil {
+			return err
+		}
+		arguments := []string{"compose", "-p", "durable-task-runner", "-f", "compose.yaml"}
+		if args[0] == "up" {
+			arguments = append(arguments, "up", "-d", "--wait", "--wait-timeout", "60")
+		} else {
+			arguments = append(arguments, "down")
+		}
+		_, err = a.runner.run(ctx, docker.command(a.root, arguments...))
+		return err
+	case "integration":
+		return a.integration(ctx, a.getenv("DURABLE_TEST_DATABASE_URL"), args[1:])
+	case "check":
+		for _, check := range []string{"fmt-check", "lint", "test"} {
+			if err := a.run(ctx, []string{check}); err != nil {
+				return err
+			}
+		}
+		return a.withDatabase(ctx, func(ctx context.Context, url string) error {
+			return a.integration(ctx, url, nil)
+		})
 	case "fmt":
 		_, err := a.command(ctx, "gofmt", "-w", ".")
 		return err

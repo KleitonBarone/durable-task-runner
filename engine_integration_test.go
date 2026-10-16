@@ -40,43 +40,42 @@ func newIntegrationEngine(t *testing.T, clock Clock, steps int) (*Engine, Defini
 	t.Helper()
 	databaseURL := os.Getenv("DURABLE_TEST_DATABASE_URL")
 	if databaseURL == "" {
-		t.Skip("DURABLE_TEST_DATABASE_URL is not set")
+		t.Fatal("DURABLE_TEST_DATABASE_URL is required for integration tests")
 	}
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	admin, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
 		t.Fatalf("open test database: %v", err)
 	}
+	t.Cleanup(admin.Close)
 	schemaID, err := newID()
 	if err != nil {
-		admin.Close()
 		t.Fatal(err)
 	}
 	schema := "durable_test_" + strings.ReplaceAll(schemaID, "-", "")
 	identifier := pgx.Identifier{schema}.Sanitize()
 	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+identifier); err != nil {
-		admin.Close()
 		t.Fatalf("create test schema: %v", err)
 	}
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := admin.Exec(cleanupCtx, "DROP SCHEMA "+identifier+" CASCADE"); err != nil {
+			t.Errorf("drop test schema: %v", err)
+		}
+	})
 
 	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
-		admin.Close()
 		t.Fatal(err)
 	}
 	config.ConnConfig.RuntimeParams["search_path"] = schema
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
-		admin.Close()
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		pool.Close()
-		if _, err := admin.Exec(context.Background(), "DROP SCHEMA "+identifier+" CASCADE"); err != nil {
-			t.Errorf("drop test schema: %v", err)
-		}
-		admin.Close()
-	})
+	t.Cleanup(pool.Close)
 
 	registry := NewRegistry()
 	definition := integrationDefinition(steps)

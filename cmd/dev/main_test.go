@@ -12,11 +12,13 @@ import (
 
 type fakeRunner struct {
 	commands []command
+	contexts []error
 	respond  func(command) (string, error)
 }
 
-func (r *fakeRunner) run(_ context.Context, c command) (string, error) {
+func (r *fakeRunner) run(ctx context.Context, c command) (string, error) {
 	r.commands = append(r.commands, c)
+	r.contexts = append(r.contexts, ctx.Err())
 	if r.respond != nil {
 		return r.respond(c)
 	}
