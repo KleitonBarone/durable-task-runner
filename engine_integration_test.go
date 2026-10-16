@@ -7,15 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/kleiton/durable-task-runner/internal/testdb"
 )
 
 type integrationInput struct {
@@ -38,45 +35,9 @@ func integrationDefinition(steps int) Definition[integrationInput] {
 
 func newIntegrationEngine(t *testing.T, clock Clock, steps int) (*Engine, Definition[integrationInput]) {
 	t.Helper()
-	databaseURL := os.Getenv("DURABLE_TEST_DATABASE_URL")
-	if databaseURL == "" {
-		t.Skip("DURABLE_TEST_DATABASE_URL is not set")
-	}
-	ctx := context.Background()
-	admin, err := pgxpool.New(ctx, databaseURL)
-	if err != nil {
-		t.Fatalf("open test database: %v", err)
-	}
-	schemaID, err := newID()
-	if err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
-	schema := "durable_test_" + strings.ReplaceAll(schemaID, "-", "")
-	identifier := pgx.Identifier{schema}.Sanitize()
-	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+identifier); err != nil {
-		admin.Close()
-		t.Fatalf("create test schema: %v", err)
-	}
-
-	config, err := pgxpool.ParseConfig(databaseURL)
-	if err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
-	config.ConnConfig.RuntimeParams["search_path"] = schema
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		pool.Close()
-		if _, err := admin.Exec(context.Background(), "DROP SCHEMA "+identifier+" CASCADE"); err != nil {
-			t.Errorf("drop test schema: %v", err)
-		}
-		admin.Close()
-	})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pool := testdb.Pool(t)
 
 	registry := NewRegistry()
 	definition := integrationDefinition(steps)

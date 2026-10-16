@@ -1,30 +1,34 @@
-DATABASE_URL ?= postgres://durable:durable@localhost:54329/durable?sslmode=disable
-
-.PHONY: deps-up deps-down fmt fmt-check lint test integration check example
+.PHONY: deps-up deps-down fmt fmt-check lint test integration e2e check race example
 
 deps-up:
-	docker compose up -d --wait
+	go run ./cmd/dev up
 
 deps-down:
-	docker compose down
+	go run ./cmd/dev down
 
 fmt:
-	gofmt -w .
+	go run ./cmd/dev fmt
 
 fmt-check:
-	test -z "$$(gofmt -l .)"
+	go run ./cmd/dev fmt-check
 
 lint:
-	go vet ./...
-	go vet -tags=integration ./...
+	go run ./cmd/dev lint
 
 test:
-	go test ./...
+	go run ./cmd/dev test
 
 integration:
-	DURABLE_TEST_DATABASE_URL="$(DATABASE_URL)" go test -tags=integration ./...
+	go run ./cmd/dev integration
 
-check: fmt-check lint test integration
+e2e:
+	go run ./cmd/dev e2e
+
+check:
+	go run ./cmd/dev check
+
+race:
+	go run ./cmd/dev race
 
 example:
-	DATABASE_URL="$(DATABASE_URL)" go run ./cmd/example
+	go run ./cmd/dev example

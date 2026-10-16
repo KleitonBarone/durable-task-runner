@@ -17,3 +17,33 @@ func TestManualClockAdvance(t *testing.T) {
 		t.Fatalf("clock after advance = %v, want %v", got, want)
 	}
 }
+
+func TestManualTickersAreDueCoalescedAndStopped(t *testing.T) {
+	clock := NewManualClock(time.Unix(0, 0))
+	ticker := clock.NewTicker(time.Second)
+	clock.Advance(999 * time.Millisecond)
+	select {
+	case <-ticker.Ticks():
+		t.Fatal("ticker fired early")
+	default:
+	}
+	clock.Advance(1 * time.Millisecond)
+	if tick := <-ticker.Ticks(); !tick.Equal(time.Unix(1, 0)) {
+		t.Fatalf("tick = %v", tick)
+	}
+	clock.Advance(10 * time.Second)
+	<-ticker.Ticks()
+	select {
+	case <-ticker.Ticks():
+		t.Fatal("slow consumer received an unbounded backlog")
+	default:
+	}
+	ticker.Stop()
+	ticker.Stop()
+	clock.Advance(time.Hour)
+	select {
+	case <-ticker.Ticks():
+		t.Fatal("stopped ticker fired")
+	default:
+	}
+}

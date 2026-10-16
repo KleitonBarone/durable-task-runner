@@ -80,7 +80,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 		resultCh <- result{output: output, err: err}
 	}()
 
-	ticker := time.NewTicker(w.config.HeartbeatInterval)
+	ticker := newTicker(w.engine.clock, w.config.HeartbeatInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -97,7 +97,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 				return true, err
 			}
 			return true, nil
-		case <-ticker.C:
+		case <-ticker.Ticks():
 			if _, err := w.engine.Heartbeat(ctx, claim, w.config.LeaseDuration); err != nil {
 				cancel()
 				return true, err
@@ -107,7 +107,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 }
 
 func (w *Worker) Run(ctx context.Context) error {
-	ticker := time.NewTicker(w.config.PollInterval)
+	ticker := newTicker(w.engine.clock, w.config.PollInterval)
 	defer ticker.Stop()
 	for {
 		worked, err := w.RunOnce(ctx)
@@ -120,7 +120,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-ticker.C:
+		case <-ticker.Ticks():
 		}
 	}
 }

@@ -4,7 +4,7 @@
 
 Durable Task Runner explores how multi-step jobs survive retries, cancellation, and worker failure. Correct state transitions matter more than feature count.
 
-Read `README.md` and `ROADMAP.md` before changing scope. Milestones 0 and 1 are implemented. Never describe milestone 2 or later work as implemented.
+Read `README.md` and `ROADMAP.md` before changing scope. Milestones 0 and 1 and the milestone 1A verification loop are implemented. Milestone 1B is next. Never describe milestone 2 or later work as implemented.
 
 ## Product rules
 
@@ -27,14 +27,14 @@ The runtime is Go 1.24 or later with PostgreSQL 17 and `pgx`. Keep the single-mo
 Run the relevant checks before handing off changes:
 
 ```sh
-gofmt -w .
-go vet ./...
-go vet -tags=integration ./...
-go test ./...
-DURABLE_TEST_DATABASE_URL='postgres://durable:durable@localhost:54329/durable?sslmode=disable' go test -tags=integration ./...
+go run ./cmd/dev fmt
+go run ./cmd/dev check
+go run ./cmd/dev race
 ```
 
-`make check` runs the non-mutating formatting check, static analysis, unit tests, and integration tests after `make deps-up` starts PostgreSQL.
+`check` starts isolated PostgreSQL, checks formatting and static analysis, runs unit/integration/process tests and the example, and cleans up its own containers. It does not need `up` and does not use the development database. Run `race` for runtime/concurrency changes. Make targets call these same commands.
+
+Use `go run ./cmd/dev test -run TestName .` for focused unit work. Explicit `integration` runs require `DURABLE_TEST_DATABASE_URL` pointing to a disposable database and fail when it is missing. See `CONTRIBUTING.md` for direct Go commands, WSL behavior, diagnostics, and targeted repetitions.
 
 Use deterministic tests with a controllable clock. The current milestone tests must cover worker crashes between side effects and acknowledgements, expired leases, duplicate delivery, concurrent claims, invalid transitions, and recovery. Add cancellation races, retry exhaustion, and compensation failure tests when milestone 2 implements those behaviors.
 
