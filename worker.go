@@ -82,8 +82,14 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		output, err := handler(handlerCtx, claim.ActivityInput)
-		resultCh <- result{output: output, err: err}
+		handlerResult := result{err: &HandlerPanicError{Value: "handler exited without returning"}}
+		defer func() {
+			if value := recover(); value != nil {
+				handlerResult.err = &HandlerPanicError{Value: value}
+			}
+			resultCh <- handlerResult
+		}()
+		handlerResult.output, handlerResult.err = handler(handlerCtx, claim.ActivityInput)
 	}()
 
 	ticker := newTicker(w.engine.clock, w.config.HeartbeatInterval)

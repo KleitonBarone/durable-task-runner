@@ -260,17 +260,17 @@ func (e *Engine) CompleteActivity(ctx context.Context, claim Claim, output json.
 	if err := validatePayload(output); err != nil {
 		return err
 	}
-	return e.finishActivity(ctx, claim, output, "")
+	return e.finishActivity(ctx, claim, output, nil)
 }
 
 func (e *Engine) FailActivity(ctx context.Context, claim Claim, activityErr error) error {
 	if activityErr == nil {
 		return fmt.Errorf("activity error is required")
 	}
-	return e.finishActivity(ctx, claim, nil, activityErr.Error())
+	return e.finishActivity(ctx, claim, nil, activityErr)
 }
 
-func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.RawMessage, errorText string) error {
+func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.RawMessage, activityErr error) error {
 	now := e.clock.Now().UTC()
 	tx, err := e.pool.Begin(ctx)
 	if err != nil {
@@ -306,7 +306,8 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 		return err
 	}
 
-	if errorText != "" {
+	if activityErr != nil {
+		errorText := activityErr.Error()
 		if err := ValidateActivityTransition(activityState, ActivityFailed); err != nil {
 			return err
 		}

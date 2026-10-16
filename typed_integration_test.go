@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -95,6 +96,57 @@ func TestTypedPlanPersistsStepIdentity(t *testing.T) {
 	}
 	if _, err := engine.Workflow(ctx, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing workflow: %v", err)
+	}
+}
+
+func TestHandlerFailuresRemainFailures(t *testing.T) {
+	for _, kind := range []string{"empty", "panic", "exit"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			engine, definition := newIntegrationEngine(t, SystemClock{}, 2)
+			execution, err := Start(ctx, engine, definition, integrationInput{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cause := errors.New("")
+			worker, err := NewWorker(engine, WorkerConfig{ID: "failure", LeaseDuration: time.Minute, HeartbeatInterval: time.Second, PollInterval: time.Millisecond}, Handle("step_1", func(context.Context, integrationInput) (string, error) {
+				switch kind {
+				case "panic":
+					panic(cause)
+				case "exit":
+					runtime.Goexit()
+				}
+				return "ignored", cause
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = worker.RunOnce(ctx)
+			if kind == "empty" && !errors.Is(err, cause) {
+				t.Fatalf("lost error: %v", err)
+			}
+			var panicErr *HandlerPanicError
+			if kind != "empty" && !errors.As(err, &panicErr) {
+				t.Fatalf("panic outcome: %v", err)
+			}
+			result, err := engine.Workflow(ctx, execution.ID)
+			if err != nil || result.State != WorkflowFailed || result.Output != nil {
+				t.Fatalf("result: %#v %v", result, err)
+			}
+			activities, err := engine.Activities(ctx, execution.ID)
+			if err != nil || activities[0].State != ActivityFailed || activities[1].State != ActivityBlocked {
+				t.Fatalf("activities: %#v %v", activities, err)
+			}
+			attempts, err := engine.Attempts(ctx, activities[0].ID)
+			if err != nil || len(attempts) != 1 || attempts[0].State != AttemptFailed {
+				t.Fatalf("attempts: %#v %v", attempts, err)
+			}
+			var active int
+			if err := engine.pool.QueryRow(ctx, `SELECT count(*) FROM leases WHERE state = 'active'`).Scan(&active); err != nil || active != 0 {
+				t.Fatalf("active leases: %d %v", active, err)
+			}
+		})
 	}
 }
 

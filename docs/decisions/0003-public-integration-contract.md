@@ -34,3 +34,10 @@ same output. Running and failed workflows have no successful final output.
 Missing executions/steps, unavailable results, incompatible types, and lost
 leases have stable errors usable with `errors.Is`. `Engine.Attempts` exposes
 ordered attempts without requiring application SQL.
+
+Success/failure is represented by the presence of an error, independent of its
+message. An empty-message error still fails the attempt and workflow. A panic or
+`runtime.Goexit` in the handler goroutine becomes `HandlerPanicError` and follows
+the same durable failure path. This does not recover panics in application-created
+goroutines or undo effects already performed. If acknowledgement fails or ownership
+is lost, recovery may deliver the activity again.
