@@ -1,133 +1,86 @@
 # Durable Task Runner
 
-Durable Task Runner is a small working execution engine for linear, multi-step jobs. It persists workflow intent before workers can claim it, uses expiring PostgreSQL leases, and recovers activities left behind by dead workers.
+Durable Task Runner is a Go library for background jobs that need to survive
+worker crashes. It stores a sequence of activities in PostgreSQL, tracks each
+attempt, and recovers unfinished work when a worker disappears.
 
-Milestones 0 and 1 are implemented. Activity delivery is at least once. The engine does not provide exactly-once side effects.
+Use it for jobs such as imports or account provisioning where losing progress
+between steps would leave work unfinished. Your application supplies Go handlers;
+the engine stores progress and coordinates workers through PostgreSQL.
 
-## Current execution model
+The project is experimental. The durable execution core works, but retries,
+timeouts, cancellation, compensation, and safe workflow version upgrades are
+still planned. See the [roadmap to v1](ROADMAP.md).
 
-- One PostgreSQL database stores workflows, activities, attempts, leases, and append-only history.
-- One scheduler recovers expired leases.
-- Any number of identical worker processes can claim activities.
-- A workflow definition expands typed Go input into a linear activity plan at start time.
-- The first activity becomes ready in the same transaction that persists the workflow and full plan.
-- Completing one activity makes the next ready in the same transaction.
-- A handler error fails the workflow. Retries are milestone 2 work.
+## Try it
 
-See [ADR 0001](docs/decisions/0001-runtime-database-and-repository.md) for the runtime and repository choices and [ADR 0002](docs/decisions/0002-state-machine-and-failure-model.md) for the state machine and crash windows.
-
-## Run locally
-
-Requirements are Go 1.24 or later, Docker with Compose, and Make. Start PostgreSQL with one command:
+You need Go 1.24 or later and Docker with Compose. PostgreSQL 17 runs locally
+through Compose.
 
 ```sh
-make deps-up
+git clone https://github.com/KleitonBarone/durable-task-runner.git
+cd durable-task-runner
+docker compose up -d --wait
+DATABASE_URL='postgres://durable:durable@localhost:54329/durable?sslmode=disable' go run ./cmd/example
 ```
 
-Run every check, including PostgreSQL integration tests:
-
-```sh
-make check
-```
-
-Run the deterministic two-step example:
-
-```sh
-make example
-```
-
-The example registers typed `welcomeInput`, persists `create_account` and `send_welcome_email`, runs both, and prints the ordered execution timeline.
-
-Without Make, use these commands from PowerShell:
+In PowerShell, replace the last line with:
 
 ```powershell
-docker compose up -d --wait
-$env:DURABLE_TEST_DATABASE_URL = 'postgres://durable:durable@localhost:54329/durable?sslmode=disable'
-go test -tags=integration ./...
-$env:DATABASE_URL = $env:DURABLE_TEST_DATABASE_URL
+$env:DATABASE_URL = 'postgres://durable:durable@localhost:54329/durable?sslmode=disable'
 go run ./cmd/example
 ```
 
-Stop the dependency without deleting its volume:
+The example runs a two-step customer welcome workflow and prints its execution
+timeline, ending in `workflow.completed`. Both handlers are local fakes; they do
+not create real accounts or send email. The example runs in one process and does
+not start a continuous scheduler.
 
-```sh
-make deps-down
-```
+Stop PostgreSQL with `docker compose down`. Its development volume is preserved.
 
-## Register and start a typed workflow
+## Use it in an application
 
-```go
-type ImportInput struct {
-    ObjectKey string `json:"object_key"`
-}
+Start with the complete [Go example](cmd/example/main.go) and the
+[integration guide](docs/integration.md).
 
-var importWorkflow = durable.Define("import_object", func(input ImportInput) ([]durable.ActivitySpec, error) {
-    fetch, err := durable.NewActivity("fetch_object", input)
-    if err != nil {
-        return nil, err
-    }
-    parse, err := durable.NewActivity("parse_object", input)
-    if err != nil {
-        return nil, err
-    }
-    return []durable.ActivitySpec{fetch, parse}, nil
-})
+1. Define a workflow that turns typed input into a fixed sequence of activities.
+2. Register the definition and open an engine connected to PostgreSQL.
+3. Apply the embedded migrations, then start an execution.
+4. Register typed activity handlers and run workers.
+5. Run one scheduler to recover expired leases. Read status and history through
+   the engine's query methods.
 
-registry := durable.NewRegistry()
-if err := durable.Register(registry, importWorkflow); err != nil {
-    return err
-}
-execution, err := durable.Start(ctx, engine, importWorkflow, ImportInput{ObjectKey: "imports/42.json"})
-```
+Workers can run as separate processes. The library provides worker and scheduler
+loops; your application owns their configuration and lifecycle. No message broker
+or separate control service is required.
 
-`Start` accepts the input type attached to the definition. It serializes the input and planned activity inputs as JSON before opening the persistence transaction.
+For now, use the checkout to evaluate integration. The Go module path needs to be
+aligned with this repository before a normal tagged installation is ready.
 
-Workers register typed handlers with `durable.Handle`. `Worker.RunOnce` claims one activity and heartbeats until the handler returns. `Worker.Run` polls continuously. `Scheduler.Run` polls for expired leases; `Scheduler.RunOnce` is useful for deterministic operation and tests.
+## What survives a crash?
 
-## Crash recovery and duplicate delivery
+The engine commits the workflow and its full activity plan before workers can
+claim work. Completing a step and making its successor ready share a transaction.
+State changes and their history events commit together.
 
-Suppose a worker performs an external side effect and crashes before `CompleteActivity` commits:
+Workers hold expiring leases and heartbeat while handling an activity. If a worker
+disappears, the scheduler abandons its attempt and makes the activity available
+again. The old lease token can no longer acknowledge it.
 
-1. Its lease reaches `expires_at` because heartbeats stopped.
-2. The scheduler marks the lease `expired` and its attempt `abandoned`.
-3. The scheduler moves the activity from `running` to `ready`.
-4. A replacement worker claims a new attempt and may repeat the side effect.
-5. The old token can no longer heartbeat or complete the activity.
+Activity delivery is **at least once**. A worker can perform a side effect and
+crash before recording success, so another worker may repeat it. Your handlers
+must use application-level idempotency or deduplication. The engine does not
+provide exactly-once side effects.
 
-The integration test `TestWorkerCrashAfterSideEffectRecoversWithAtLeastOnceDelivery` performs the side effect twice, rejects the stale acknowledgement, and completes through the replacement attempt. Use an application-level idempotency key or deduplication record for real side effects until milestone 2 adds first-class keys.
+A handler error currently fails the workflow. Activity outputs are stored, but
+later steps do not automatically receive them. Keep definitions and handlers
+compatible while executions are in progress.
 
-## Timeline
+## Development
 
-`Engine.Timeline` returns history in database sequence order. A recovered activity produces events like these:
-
-```text
-workflow.started
-activity.scheduled
-activity.claimed
-attempt.abandoned
-activity.recovered
-activity.claimed
-activity.completed
-workflow.completed
-```
-
-History rows are append-only. Current-state tables remain mutable so workers can claim efficiently. State changes and their history events share a transaction.
-
-## Verification
-
-```sh
-gofmt -w .
-go vet ./...
-go vet -tags=integration ./...
-go test ./...
-DURABLE_TEST_DATABASE_URL='postgres://durable:durable@localhost:54329/durable?sslmode=disable' go test -tags=integration ./...
-```
-
-The integration suite uses a unique PostgreSQL schema per test and covers concurrent claims, heartbeat extension, lease expiration, a worker disappearing after its side effect, duplicate delivery, stale-token fencing, and recovery. Unit tests cover typed registration, typed handlers, the controllable clock, and invalid state transitions.
-
-## Not implemented yet
-
-Milestone 2 owns retry policies, bounded timeouts, cancellation, engine-managed idempotency keys, compensation, and retry-exhaustion reporting. Multiple queues, a UI, brokers, distributed lock services, child workflows, and workflow versioning are also out of scope.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, focused tests, database checks,
+and the current verification limits. The [roadmap](ROADMAP.md) puts a reproducible
+development loop and process crash tests before further execution features.
 
 ## License
 
