@@ -59,7 +59,11 @@ func (e *Engine) Migrate(ctx context.Context) error {
 	return Migrate(ctx, e.pool)
 }
 
-func (e *Engine) start(ctx context.Context, definitionName string, input any) (WorkflowExecution, error) {
+func (e *Engine) start(ctx context.Context, definitionName string, input any, options ...StartOption) (WorkflowExecution, error) {
+	key, err := startKey(options)
+	if err != nil {
+		return WorkflowExecution{}, err
+	}
 	definition, ok := e.registry.lookup(definitionName)
 	if !ok {
 		return WorkflowExecution{}, fmt.Errorf("%w: %q", ErrUnknownWorkflow, definitionName)
@@ -94,6 +98,7 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any) (W
 	execution := WorkflowExecution{
 		ID:             workflowID,
 		DefinitionName: definitionName,
+		StartKey:       key,
 		Input:          encodedInput,
 		State:          WorkflowRunning,
 		CreatedAt:      now,
@@ -106,12 +111,27 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any) (W
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	_, err = tx.Exec(ctx, `
-		INSERT INTO workflow_executions (id, definition_name, input, state, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $5)`,
-		workflowID, definitionName, encodedInput, WorkflowRunning, now)
+	inserted, err := tx.Exec(ctx, `
+		INSERT INTO workflow_executions (id, definition_name, input, state, created_at, updated_at, start_key)
+		VALUES ($1, $2, $3, $4, $5, $5, $6)
+		ON CONFLICT (definition_name, start_key) DO NOTHING`,
+		workflowID, definitionName, encodedInput, WorkflowRunning, now, key)
 	if err != nil {
 		return WorkflowExecution{}, fmt.Errorf("persist workflow: %w", err)
+	}
+	if inserted.RowsAffected() == 0 {
+		var existingID string
+		var matches bool
+		if err := tx.QueryRow(ctx, `SELECT id, input = $3::jsonb FROM workflow_executions WHERE definition_name = $1 AND start_key = $2`, definitionName, key, encodedInput).Scan(&existingID, &matches); err != nil {
+			return WorkflowExecution{}, fmt.Errorf("resolve start key: %w", err)
+		}
+		if !matches {
+			return WorkflowExecution{}, ErrStartConflict
+		}
+		if err := tx.Rollback(ctx); err != nil {
+			return WorkflowExecution{}, fmt.Errorf("finish duplicate start: %w", err)
+		}
+		return e.Workflow(ctx, existingID)
 	}
 	if err := appendHistory(ctx, tx, workflowID, nil, nil, "workflow.started", map[string]any{
 		"definition": definitionName,

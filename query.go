@@ -11,10 +11,10 @@ import (
 func (e *Engine) Workflow(ctx context.Context, workflowID string) (WorkflowExecution, error) {
 	var execution WorkflowExecution
 	err := e.pool.QueryRow(ctx, `
-		SELECT id, definition_name, input, state, created_at, updated_at, completed_at, output
+		SELECT id, definition_name, input, state, created_at, updated_at, completed_at, output, start_key
 		FROM workflow_executions WHERE id = $1`, workflowID).Scan(
 		&execution.ID, &execution.DefinitionName, &execution.Input, &execution.State,
-		&execution.CreatedAt, &execution.UpdatedAt, &execution.CompletedAt, &execution.Output,
+		&execution.CreatedAt, &execution.UpdatedAt, &execution.CompletedAt, &execution.Output, &execution.StartKey,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WorkflowExecution{}, fmt.Errorf("%w: workflow %q", ErrNotFound, workflowID)

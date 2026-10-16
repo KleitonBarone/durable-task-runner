@@ -43,6 +43,7 @@ const (
 type WorkflowExecution struct {
 	ID             string
 	DefinitionName string
+	StartKey       *string
 	Input          json.RawMessage
 	Output         json.RawMessage
 	State          WorkflowState

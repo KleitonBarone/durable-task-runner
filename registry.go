@@ -146,8 +146,8 @@ func (r *Registry) bindActivities(contracts map[string]string) error {
 	return nil
 }
 
-func Start[Input any](ctx context.Context, engine *Engine, definition Definition[Input], input Input) (WorkflowExecution, error) {
-	return engine.start(ctx, definition.Name, input)
+func Start[Input any](ctx context.Context, engine *Engine, definition Definition[Input], input Input, options ...StartOption) (WorkflowExecution, error) {
+	return engine.start(ctx, definition.Name, input, options...)
 }
 
 type Handler func(context.Context, json.RawMessage) (json.RawMessage, error)

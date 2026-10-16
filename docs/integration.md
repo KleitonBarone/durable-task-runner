@@ -50,9 +50,17 @@ decoding range. The standard `encoding/json` rules apply, including unknown-fiel
 handling. Invalid payloads return `ErrInvalidInput`; oversized ones also match
 `ErrPayloadTooLarge`. Invalid completion output leaves the lease unacknowledged.
 
-Starting twice creates two executions. There is no built-in start-key deduplication.
-If a start returns an ambiguous database error, it may have committed. Do not assume
-blindly starting again will reuse the same execution.
+Without a key, starting twice creates two executions. Pass
+`durable.WithStartKey("request-42")` to `Start` to deduplicate concurrent calls
+within a workflow definition name and engine database/schema. Reusing the key
+with JSON-equivalent input returns the original execution, including terminal
+executions. Different input returns `ErrStartConflict`. Keys contain 1-200 UTF-8
+bytes without NUL and live as long as the execution row. There is no automatic
+retention. Keep keys private to the application; they are not authentication.
+
+A start error may have followed a successful commit. Retry with the same key and
+input to resolve that ambiguity. Use a new key to intentionally start new work.
+Plans must remain deterministic and free of side effects even for duplicate starts.
 
 ## Own the database lifecycle
 

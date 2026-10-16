@@ -14,6 +14,7 @@ var (
 	ErrPayloadTooLarge   = errors.New("JSON payload exceeds limit")
 	ErrResultUnavailable = errors.New("step result is not available")
 	ErrTypeMismatch      = errors.New("activity type does not match persisted contract")
+	ErrStartConflict     = errors.New("start key already used with different input")
 )
 
 // HandlerPanicError records an abnormal handler exit as a task failure. Panics

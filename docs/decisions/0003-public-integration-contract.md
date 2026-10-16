@@ -41,3 +41,12 @@ message. An empty-message error still fails the attempt and workflow. A panic or
 the same durable failure path. This does not recover panics in application-created
 goroutines or undo effects already performed. If acknowledgement fails or ownership
 is lost, recovery may deliver the activity again.
+
+Optional start keys are unique by definition name within one engine schema.
+Insertion uses a database uniqueness constraint in the same transaction as the
+full plan and initial history. Concurrent duplicate callers wait for that
+transaction and read its committed execution. PostgreSQL jsonb equality defines
+same input. Conflicting input returns `ErrStartConflict`; terminal executions are
+never restarted by reusing their key. Keys last as long as their execution rows.
+No retention is implemented. Callers resolve ambiguous commit errors by repeating
+the same keyed request. Unkeyed starts intentionally create independent executions.
