@@ -30,7 +30,7 @@ func (s *Scheduler) RunOnce(ctx context.Context) (int, error) {
 }
 
 func (s *Scheduler) Run(ctx context.Context) error {
-	ticker := time.NewTicker(s.pollInterval)
+	ticker := newTicker(s.engine.clock, s.pollInterval)
 	defer ticker.Stop()
 	for {
 		if _, err := s.RunOnce(ctx); err != nil {
@@ -39,7 +39,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-ticker.C:
+		case <-ticker.Ticks():
 		}
 	}
 }
