@@ -18,9 +18,14 @@ func main() {
 func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	echo := durable.DefineActivity[string, string]("echo")
 	definition := durable.Define("external_consumer", func(input string) ([]durable.ActivitySpec, error) {
-		step, err := durable.NewActivity("echo", input)
-		return []durable.ActivitySpec{step}, err
+		first, err := echo.Step("first", input)
+		if err != nil {
+			return nil, err
+		}
+		second, err := echo.Step("second", input+"!")
+		return []durable.ActivitySpec{first, second}, err
 	})
 	registry := durable.NewRegistry()
 	if err := durable.Register(registry, definition); err != nil {
@@ -38,12 +43,20 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	worker, err := durable.NewWorker(engine, durable.WorkerConfig{ID: "consumer", LeaseDuration: time.Second, HeartbeatInterval: 100 * time.Millisecond, PollInterval: time.Millisecond}, durable.Handle("echo", func(_ context.Context, input string) (string, error) { return input, nil }))
+	worker, err := durable.NewWorker(engine, durable.WorkerConfig{ID: "consumer", LeaseDuration: time.Second, HeartbeatInterval: 100 * time.Millisecond, PollInterval: time.Millisecond}, echo.Handle(func(ctx context.Context, input string) (string, error) {
+		if input == "hello" {
+			return input, nil
+		}
+		previous, err := echo.Result(ctx, "first")
+		return previous + input, err
+	}))
 	if err != nil {
 		return err
 	}
-	if _, err := worker.RunOnce(ctx); err != nil {
-		return err
+	for range 2 {
+		if _, err := worker.RunOnce(ctx); err != nil {
+			return err
+		}
 	}
 	result, err := engine.Workflow(ctx, execution.ID)
 	if err != nil {
@@ -51,6 +64,10 @@ func run() error {
 	}
 	if result.State != durable.WorkflowCompleted {
 		return fmt.Errorf("consumer workflow state: %s", result.State)
+	}
+	output, err := echo.WorkflowResult(ctx, engine, execution.ID)
+	if err != nil || output != "hellohello!" {
+		return fmt.Errorf("consumer result %q: %v", output, err)
 	}
 	fmt.Println("external consumer completed")
 	return nil

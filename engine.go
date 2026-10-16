@@ -161,7 +161,7 @@ func (e *Engine) ClaimActivity(ctx context.Context, workerID string, leaseDurati
 	var claim Claim
 	var currentState ActivityState
 	err = tx.QueryRow(ctx, `
-		SELECT a.id, a.workflow_id, a.name, a.input, a.attempt_count, a.state
+		SELECT a.id, a.workflow_id, a.name, a.input, a.attempt_count, a.state, a.step_key, a.position
 		FROM activities a
 		JOIN workflow_executions w ON w.id = a.workflow_id
 		WHERE a.state = 'ready' AND w.state = 'running'
@@ -169,7 +169,7 @@ func (e *Engine) ClaimActivity(ctx context.Context, workerID string, leaseDurati
 		FOR UPDATE OF a SKIP LOCKED
 		LIMIT 1`).Scan(
 		&claim.ActivityID, &claim.WorkflowID, &claim.ActivityName, &claim.ActivityInput,
-		&claim.AttemptNumber, &currentState,
+		&claim.AttemptNumber, &currentState, &claim.StepKey, &claim.Position,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Claim{}, ErrNoActivity
@@ -257,8 +257,8 @@ func (e *Engine) CompleteActivity(ctx context.Context, claim Claim, output json.
 	if len(output) == 0 {
 		output = json.RawMessage("null")
 	}
-	if !json.Valid(output) {
-		return fmt.Errorf("activity output must be valid JSON")
+	if err := validatePayload(output); err != nil {
+		return err
 	}
 	return e.finishActivity(ctx, claim, output, "")
 }
@@ -376,7 +376,7 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 			if err := ValidateWorkflowTransition(WorkflowRunning, WorkflowCompleted); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `UPDATE workflow_executions SET state = $2, updated_at = $3, completed_at = $3 WHERE id = $1 AND state = $4`, workflowID, WorkflowCompleted, now, WorkflowRunning); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE workflow_executions SET state = $2, updated_at = $3, completed_at = $3, output = $5 WHERE id = $1 AND state = $4`, workflowID, WorkflowCompleted, now, WorkflowRunning, output); err != nil {
 				return fmt.Errorf("complete workflow: %w", err)
 			}
 			if err := appendHistory(ctx, tx, workflowID, nil, nil, "workflow.completed", map[string]any{}, now); err != nil {

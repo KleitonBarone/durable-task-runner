@@ -37,6 +37,19 @@ compatible across deployments; these identities do not replace schema versioning
 The raw `NewActivity` and `Handle` functions remain available for existing users.
 Outputs are stored as JSON and readable through `Engine.Activities`.
 
+Inside a handler, use `activity.Result(ctx, "earlier-key")` for typed prior-step
+output. Self, future, and incomplete results return `ErrResultUnavailable`.
+Use `activity.WorkflowResult(ctx, engine, id)` for the final step's typed result
+after successful completion. `Engine.Workflow` also includes the raw final output;
+`Engine.Attempts` lists each activity's attempts. Use `errors.Is` with `ErrNotFound`,
+`ErrTypeMismatch`, and `ErrLeaseLost`. Errors retain their wrapped causes.
+
+Each workflow input, step input, and output has a 1 MiB encoded JSON limit.
+Payloads must be valid UTF-8 JSON without NUL strings or numbers outside float64
+decoding range. The standard `encoding/json` rules apply, including unknown-field
+handling. Invalid payloads return `ErrInvalidInput`; oversized ones also match
+`ErrPayloadTooLarge`. Invalid completion output leaves the lease unacknowledged.
+
 Starting twice creates two executions. There is no built-in start-key deduplication.
 If a start returns an ambiguous database error, it may have committed. Do not assume
 blindly starting again will reuse the same execution.

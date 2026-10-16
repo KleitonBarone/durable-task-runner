@@ -69,9 +69,9 @@ crash before recording success, so another worker may repeat it. Your handlers
 must use application-level idempotency or deduplication. The engine does not
 provide exactly-once side effects.
 
-A handler error currently fails the workflow. Activity outputs are stored, but
-later steps do not automatically receive them. Keep definitions and handlers
-compatible while executions are in progress.
+A handler error currently fails the workflow. Typed handlers can read completed
+earlier-step results, and the last step's output is the workflow result. Keep
+definitions and handlers compatible while executions are in progress.
 
 ## Development
 

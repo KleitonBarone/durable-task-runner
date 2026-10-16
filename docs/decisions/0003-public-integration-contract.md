@@ -19,3 +19,18 @@ The original `NewActivity` and `Handle` API remains available for raw integratio
 Legacy plans receive positional keys `step-0`, `step-1`, and so on. Migration 002
 backfills those keys without changing execution state. Typed and raw declarations
 of the same activity name cannot be mixed in one registry.
+
+Each workflow input, step input, and output is limited to 1 MiB of encoded UTF-8
+JSON before persistence. NUL strings and numbers outside Go's float64 decoding
+range are rejected to keep validation consistent with the supported jsonb path.
+Encoding and decoding errors preserve their causes through Go error wrapping.
+`ErrInvalidInput` and `ErrPayloadTooLarge` identify validation failures.
+
+`activity.Result(ctx, key)` reads only a completed earlier step in the handler's
+execution. It checks persisted activity/type identity. It cannot read itself or
+a future step. `activity.WorkflowResult(ctx, engine, id)` returns the last step's
+typed output only after successful workflow completion. Raw status includes that
+same output. Running and failed workflows have no successful final output.
+Missing executions/steps, unavailable results, incompatible types, and lost
+leases have stable errors usable with `errors.Is`. `Engine.Attempts` exposes
+ordered attempts without requiring application SQL.

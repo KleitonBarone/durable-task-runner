@@ -75,6 +75,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 
 	handlerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	handlerCtx = context.WithValue(handlerCtx, activityContextKey{}, activityContext{engine: w.engine, claim: claim})
 	type result struct {
 		output []byte
 		err    error
