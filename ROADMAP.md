@@ -1,7 +1,7 @@
 # Roadmap to v1
 
 This is the implementation plan for the first complete release. Milestones 0 and
-1, 1A, 1B, 2A, and 2B are implemented. Milestone 2C is next.
+1, 1A, 1B, and milestone 2 are implemented. Milestone 3A is next.
 Every unchecked item below is planned work.
 
 See the [delivery plan](docs/delivery-plan.md) for ordered commits, branches,
@@ -314,34 +314,34 @@ public API and process cancellation.
 
 ### Deliverables
 
-- [ ] Allow optional compensation per forward step. Persist compensation inputs or
+- [x] Allow optional compensation per forward step. Persist compensation inputs or
   references to committed results, handler identity, and retry/deadline policy before
   making compensation claimable.
-- [ ] On failure/cancellation, stop forward scheduling and compensate known completed
+- [x] On failure/cancellation, stop forward scheduling and compensate known completed
   steps in reverse order. Persist the trigger and compensating state. Reuse attempts,
   leases, fencing, and history for cleanup deliveries.
-- [ ] Give compensation stable effect keys distinct from forward effect keys.
+- [x] Give compensation stable effect keys distinct from forward effect keys.
   Cleanup is also delivered at least once and needs idempotency.
-- [ ] Define the ambiguous crash window. An external effect without a committed
+- [x] Define the ambiguous crash window. An external effect without a committed
   forward result is not automatically known to be compensatable. Document application
   reconciliation using stable keys or deduplication records.
-- [ ] Bound cleanup retries/timeouts. Preserve the original failure and record cleanup
+- [x] Bound cleanup retries/timeouts. Preserve the original failure and record cleanup
   failures separately. For v1, stop on exhausted cleanup, expose `compensation_failed`,
   and require an application reconciliation run. Do not claim automatic rollback or
   silently reopen a terminal execution.
-- [ ] Give cleanup its own deadline so an expired forward-work deadline cannot
+- [x] Give cleanup its own deadline so an expired forward-work deadline cannot
   disable required cleanup. Successful cleanup preserves the original failed or
   cancelled outcome and exposes compensation success separately. Settle cancellation
   after required cleanup finishes or exhausts its budget.
-- [ ] Define cancellation during compensation. Repeated cancellation does not cancel
+- [x] Define cancellation during compensation. Repeated cancellation does not cancel
   cleanup already required by the workflow's compensation policy.
 
 ### Exit gate
 
-- [ ] Test reverse order, absent compensation, crash after cleanup side effect,
+- [x] Test reverse order, absent compensation, crash after cleanup side effect,
   restart between cleanup steps, duplicate delivery, cancellation during cleanup,
   cleanup timeout, and exhaustion.
-- [ ] A process example fails its last forward step, restarts during compensation,
+- [x] A process example fails its last forward step, restarts during compensation,
   and demonstrates successful cleanup and an injected cleanup failure.
 
 Suggested PRs: semantics and persisted compensation; execution and recovery;
@@ -462,5 +462,5 @@ state-machine ADR, SQL constraints, tests, and user docs together when semantics
 change. Introduce verification before the feature it must verify, then extend it
 at each milestone.
 
-The next action is milestone 2C after the cancellation PR merges.
-Compensation, upgrades, operations, and release qualification remain.
+The next action is milestone 3A after the compensation PR merges.
+Safe upgrades, operations, and release qualification remain.

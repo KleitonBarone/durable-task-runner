@@ -219,6 +219,19 @@ Branch: `feat/compensation`. Prerequisite: 2B merged.
 Push every passing commit. Do not mark cleanup complete unless its persisted
 outcome and original workflow failure both remain inspectable.
 
+The compensation ADR is `8f0dd3c`; checkpoints 26-28 share `a4770fd` in
+[PR #5](https://github.com/KleitonBarone/durable-task-runner/pull/5).
+Persistence, routing, and terminal outcome handling ship together so a public
+cleanup declaration works in the commit that introduces it. Full checks and race
+checks pass. Focused tests cover reverse order, engine restart, typed forward
+results, stale/duplicate acknowledgements, absent declarations, independent
+deadlines, exhaustion, cancellation during cleanup, and atomic history failure.
+Checkpoint 29 adds separate-process cleanup crash/restart and failure scenarios,
+the compiled application declaration/handler, and documentation.
+
+PR #4 passed all four checks on `2d817bf`, installed from a fresh external module
+cache, and merged at `a2f20b7` before this batch started.
+
 ## Batch 3A. Keep running executions safe during upgrades
 
 Branch: `feat/safe-evolution`. Prerequisite: 2C merged.

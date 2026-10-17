@@ -56,3 +56,24 @@ cleanup attempts before starting a linked reconciliation execution with new
 business intent and a new start key. Terminal executions never reopen.
 
 See [ADR 0006](decisions/0006-compensation.md) for transaction and failure rules.
+
+## Reproduce a cleanup crash
+
+```sh
+go run ./cmd/dev e2e -run TestProcessCompensationRecoversAfterCleanupEffect .
+```
+
+The isolated process fixture fails its last forward step, kills a worker after
+the cleanup effect, and restarts worker and scheduler. Observed outcomes:
+
+```text
+cleanup crash: attempts=2 effects=1 original=failed compensation=completed
+cleanup crash: attempts=3 effects=1 original=failed compensation=failed
+```
+
+The successful case records two cleanup deliveries with one effect key and one
+deduplicated effect. The failure case injects errors until the remaining claim
+budget is exhausted. Both preserve the original forward failure and reject the
+old cleanup token. The timeline includes `workflow.compensating`,
+`compensation.scheduled`, abandoned/replacement attempts, and either
+`workflow.compensation_completed` or `workflow.compensation_failed`.

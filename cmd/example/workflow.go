@@ -31,15 +31,22 @@ type welcomeResult struct {
 }
 
 var createAccount = durable.DefineActivity[accountInput, accountResult]("welcome.create_account")
+var deleteAccount = durable.DefineActivity[accountInput, accountResult]("welcome.delete_account")
 var sendEmail = durable.DefineActivity[emailInput, welcomeResult]("welcome.send_email")
 
 var welcomeWorkflow = durable.Define("welcome_customer", func(input welcomeInput) ([]durable.ActivitySpec, error) {
 	if strings.TrimSpace(input.AccountID) == "" || strings.TrimSpace(input.Email) == "" {
 		return nil, errors.New("account ID and email are required")
 	}
+	cleanup, err := deleteAccount.Step("delete-account", accountInput{AccountID: input.AccountID},
+		durable.WithRetry(durable.RetryPolicy{MaxAttempts: 3, RetryErrors: true}),
+		durable.WithAttemptTimeout(30*time.Second))
+	if err != nil {
+		return nil, err
+	}
 	account, err := createAccount.Step("account", accountInput{AccountID: input.AccountID},
 		durable.WithRetry(durable.RetryPolicy{MaxAttempts: 3, RetryErrors: true, InitialInterval: time.Second}),
-		durable.WithAttemptTimeout(30*time.Second))
+		durable.WithAttemptTimeout(30*time.Second), durable.WithCompensation(cleanup))
 	if err != nil {
 		return nil, err
 	}

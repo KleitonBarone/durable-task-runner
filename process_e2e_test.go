@@ -28,6 +28,13 @@ var processDefinition = durable.Define("process-recovery", func(input string) ([
 	if input == "hang" {
 		options = append(options, durable.WithAttemptTimeout(time.Second))
 	}
+	if input == "compensation" {
+		cleanup, err := durable.NewActivity("cleanup", input, durable.WithRetry(durable.RetryPolicy{MaxAttempts: 3, RetryErrors: true, InitialInterval: 50 * time.Millisecond}), durable.WithAttemptTimeout(5*time.Second))
+		if err != nil {
+			return nil, err
+		}
+		options = append(options, durable.WithCompensation(cleanup))
+	}
 	first, err := durable.NewActivity("effect", input, options...)
 	if err != nil {
 		return nil, err
@@ -90,6 +97,9 @@ func TestProcessFixture(t *testing.T) {
 		window := os.Getenv("DURABLE_PROCESS_WINDOW")
 		handler := func(step string) durable.HandlerRegistration {
 			return durable.Handle(step, func(ctx context.Context, input string) (string, error) {
+				if step == "finish" && input == "compensation" {
+					return "", errors.New("injected forward failure")
+				}
 				if step == "effect" && window == "before" {
 					if err := barrier(); err != nil {
 						return "", err
@@ -100,6 +110,9 @@ func TestProcessFixture(t *testing.T) {
 				metadata, ok := durable.Metadata(ctx)
 				if !ok {
 					return "", errors.New("missing activity metadata")
+				}
+				if step == "cleanup" && window == "cleanup-fail" {
+					return "", errors.New("injected cleanup failure")
 				}
 				if step == "effect" && window == "retry" && metadata.AttemptNumber == 1 {
 					return "", errors.New("injected retryable failure")
@@ -115,11 +128,18 @@ func TestProcessFixture(t *testing.T) {
 					return "", err
 				}
 				var effectKey *string
-				if window == "dedup" || window == "dedup-recover" {
+				if window == "dedup" || window == "dedup-recover" || step == "cleanup" {
 					effectKey = &metadata.EffectKey
 				}
 				if _, err := pool.Exec(ctx, `INSERT INTO fixture_effects (worker, step, effect_key) VALUES ($1, $2, $3) ON CONFLICT (effect_key) DO NOTHING`, id, step, effectKey); err != nil {
 					return "", err
+				}
+				if step == "cleanup" && window == "cleanup-crash" {
+					if err := barrier(); err != nil {
+						return "", err
+					}
+					<-ctx.Done()
+					return "", ctx.Err()
 				}
 				if step == "effect" && (window == "after" || window == "dedup" || window == "cancel") {
 					if err := barrier(); err != nil {
@@ -138,7 +158,7 @@ func TestProcessFixture(t *testing.T) {
 		}
 		worker, err := durable.NewWorker(engine, durable.WorkerConfig{
 			ID: id, LeaseDuration: 2 * time.Second, HeartbeatInterval: 200 * time.Millisecond, PollInterval: 20 * time.Millisecond,
-		}, handler("effect"), handler("finish"))
+		}, handler("effect"), handler("finish"), handler("cleanup"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -621,4 +641,84 @@ func TestProcessCancellationSurvivesWorkerAndSchedulerRestart(t *testing.T) {
 	workerB.stop(t)
 	schedulerB.stop(t)
 	t.Logf("cancellation survived worker/scheduler restart; no successor claim; stale result fenced; timeline=%v", types)
+}
+
+func TestProcessCompensationRecoversAfterCleanupEffect(t *testing.T) {
+	for _, failure := range []bool{false, true} {
+		name := "successful_cleanup"
+		if failure {
+			name = "cleanup_exhausted"
+		}
+		t.Run(name, func(t *testing.T) {
+			engine, pool, databaseURL := processTestEngine(t)
+			execution, err := durable.Start(t.Context(), engine, processDefinition, "compensation")
+			if err != nil {
+				t.Fatal(err)
+			}
+			scheduler := startFixture(t, "scheduler", "cleanup-scheduler-A", databaseURL, "", durable.Claim{})
+			worker := startFixture(t, "worker", "cleanup-worker-A", databaseURL, "cleanup-crash", durable.Claim{})
+			waitProcessState(t, []*fixtureProcess{scheduler, worker}, func() bool {
+				var ready bool
+				err := pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM fixture_barriers WHERE worker='cleanup-worker-A')`).Scan(&ready)
+				return err == nil && ready
+			})
+			var stale durable.Claim
+			if err := pool.QueryRow(t.Context(), `SELECT l.token,l.activity_id,l.attempt_id FROM leases l JOIN activities a ON a.id=l.activity_id WHERE a.workflow_id=$1 AND a.kind='compensation' AND l.state='active'`, execution.ID).Scan(&stale.LeaseToken, &stale.ActivityID, &stale.AttemptID); err != nil {
+				t.Fatal(err)
+			}
+			worker.kill(t)
+			scheduler.kill(t)
+			schedulerB := startFixture(t, "scheduler", "cleanup-scheduler-B", databaseURL, "", durable.Claim{})
+			window := ""
+			if failure {
+				window = "cleanup-fail"
+			}
+			workerB := startFixture(t, "worker", "cleanup-worker-B", databaseURL, window, durable.Claim{})
+			wantState, wantCompensation := durable.WorkflowFailed, durable.CompensationCompleted
+			if failure {
+				wantState, wantCompensation = durable.WorkflowCompensationFailed, durable.CompensationFailed
+			}
+			waitProcessState(t, []*fixtureProcess{schedulerB, workerB}, func() bool {
+				state, err := engine.Workflow(t.Context(), execution.ID)
+				return err == nil && state.State == wantState && state.CompensationState == wantCompensation
+			})
+			state, err := engine.Workflow(t.Context(), execution.ID)
+			if err != nil || state.OriginalState != durable.WorkflowFailed || state.LastError != "injected forward failure" || (failure && state.CompensationError != "injected cleanup failure") {
+				t.Fatalf("causes: %#v %v", state, err)
+			}
+			attempts, err := engine.Attempts(t.Context(), stale.ActivityID)
+			wantAttempts := 2
+			if failure {
+				wantAttempts = 3
+			}
+			if err != nil || len(attempts) != wantAttempts || attempts[0].State != durable.AttemptAbandoned {
+				t.Fatalf("cleanup attempts: %#v %v", attempts, err)
+			}
+			var effects int
+			if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM fixture_effects WHERE step='cleanup'`).Scan(&effects); err != nil || effects != 1 {
+				t.Fatalf("cleanup effects=%d %v", effects, err)
+			}
+			if !failure {
+				var deliveries, keys, attemptIDs int
+				if err := pool.QueryRow(t.Context(), `SELECT count(*),count(DISTINCT effect_key),count(DISTINCT attempt_id) FROM fixture_deliveries WHERE step='cleanup'`).Scan(&deliveries, &keys, &attemptIDs); err != nil || deliveries != 2 || keys != 1 || attemptIDs != 2 {
+					t.Fatalf("cleanup dedup: deliveries=%d keys=%d attempts=%d %v", deliveries, keys, attemptIDs, err)
+				}
+			}
+			staleWorker := startFixture(t, "stale", "cleanup-stale", databaseURL, "", stale)
+			if err := staleWorker.wait(t); err != nil {
+				t.Fatal(err)
+			}
+			events, err := engine.Timeline(t.Context(), execution.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var types []string
+			for _, event := range events {
+				types = append(types, event.Type)
+			}
+			workerB.stop(t)
+			schedulerB.stop(t)
+			t.Logf("cleanup crash: attempts=%d effects=%d original=%s compensation=%s timeline=%v", len(attempts), effects, state.OriginalState, state.CompensationState, types)
+		})
+	}
 }

@@ -9,8 +9,8 @@ between steps would leave work unfinished. Your application supplies Go handlers
 the engine stores progress and coordinates workers through PostgreSQL.
 
 The project is experimental. The durable core includes bounded retries,
-execution deadlines, and cooperative cancellation. Compensation and safe workflow
-version upgrades are still planned. See the [roadmap to v1](ROADMAP.md).
+execution deadlines, cooperative cancellation, and explicit compensation.
+Safe workflow version upgrades are still planned. See the [roadmap to v1](ROADMAP.md).
 
 ## Try it
 
@@ -27,10 +27,9 @@ go run ./cmd/dev example
 These commands also work in PowerShell. If Docker is installed only inside WSL,
 the development command uses the Ubuntu distribution automatically.
 
-The example runs a two-step customer welcome workflow and prints its execution
-timeline and final result. Both handlers are local fakes; they do not create real
-accounts or send email. The demo runs worker and scheduler loops in one process,
-then shuts them down. Its other modes run those loops in separate processes.
+The example runs fake customer welcome steps, prints the timeline and result,
+then shuts down. It creates no real accounts or email. Other modes run workers
+and the scheduler in separate processes.
 
 Stop PostgreSQL with `go run ./cmd/dev down`. Its development volume is preserved.
 
@@ -43,12 +42,11 @@ Start with the complete [Go example](cmd/example/main.go) and the
 2. Register the definition and open an engine connected to PostgreSQL.
 3. Apply the embedded migrations, then start an execution with an optional deduplication key.
 4. Register typed activity handlers and run workers.
-5. Run one scheduler to recover expired leases. Read prior-step results in handlers
-   and inspect final results, attempts, and history through public APIs.
+5. Run one scheduler for recovery. Read prior-step results in handlers and inspect
+   outcomes through public APIs.
 
-Workers can run as separate processes. The library provides worker and scheduler
-loops; your application owns their configuration and lifecycle. No message broker
-or separate control service is required.
+Your application owns runtime configuration and lifecycle. No message broker or
+separate control service is required.
 
 Install an exact pushed revision, replacing `<commit>` with its SHA:
 
@@ -56,8 +54,7 @@ Install an exact pushed revision, replacing `<commit>` with its SHA:
 go get github.com/KleitonBarone/durable-task-runner@<commit>
 ```
 
-Installation is verified from a separate consumer without a local replacement.
-A release tag is still planned.
+Separate consumer installation is verified. Release tags are planned.
 
 ## What survives a crash?
 
@@ -65,9 +62,9 @@ The engine commits the workflow and its full activity plan before workers can
 claim work. Completing a step and making its successor ready share a transaction.
 State changes and their history events commit together.
 
-Workers hold expiring leases and heartbeat while handling an activity. If a worker
-disappears, the scheduler abandons its attempt and makes the activity available
-again within its attempt budget. The old lease token can no longer acknowledge it.
+Workers hold expiring leases and heartbeat while handling an activity. The
+scheduler recovers abandoned work within its attempt budget. Old lease tokens
+cannot acknowledge replacement attempts.
 
 Activity delivery is **at least once**. A worker can perform a side effect and
 crash before recording success, so another worker may repeat it. Your handlers
@@ -79,11 +76,13 @@ A handler error fails its workflow unless its step opts into bounded retries.
 The default budget is three claims, including crashes. Attempts default to five
 minutes and workflows to 24 hours; heartbeats cannot extend these limits. See
 [retry and deadline options](docs/retries.md). The worker continues to other jobs.
-The last step's output is the workflow result. Keep definitions and handlers
-compatible while executions are in progress.
+The last step's output is the workflow result. Keep handlers compatible with
+executions in progress.
 
 Applications can [cancel an execution](docs/cancellation.md). A committed request
 stops forward progress and asks handlers to stop; it does not undo external effects.
+Optional [compensation](docs/compensation.md) runs declared cleanup for completed
+steps in reverse order and records cleanup failures separately.
 
 ## Development
 

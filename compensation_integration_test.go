@@ -387,3 +387,50 @@ func TestCleanupDeclarationRejectsPostgresInvalidInputAtomically(t *testing.T) {
 		t.Fatalf("partial start: %d %v", count, err)
 	}
 }
+
+func TestCompensationConcurrentClaimsAndMissingHandler(t *testing.T) {
+	engine, _, execution := compensationExecution(t, RetryPolicy{})
+	completeForwardSteps(t, engine, 2)
+	failForward(t, engine)
+	worker, err := NewWorker(engine, WorkerConfig{ID: "forward-only"}, compCreate.Handle(func(_ context.Context, input string) (string, error) { return input, nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if worked, err := worker.RunOnce(t.Context()); err != nil || worked {
+		t.Fatalf("unsupported cleanup claim: %v %v", worked, err)
+	}
+	unsupported, err := worker.UnsupportedActivities(t.Context())
+	if err != nil || len(unsupported) != 1 || unsupported[0].Name != "undo" || unsupported[0].ReadyCount != 1 {
+		t.Fatalf("cleanup diagnostic: %#v %v", unsupported, err)
+	}
+	type result struct {
+		claim Claim
+		err   error
+	}
+	results := make(chan result, 20)
+	for range 20 {
+		go func() {
+			claim, err := engine.ClaimActivity(t.Context(), "cleanup-racer", time.Minute)
+			results <- result{claim, err}
+		}()
+	}
+	claimed := 0
+	for range 20 {
+		result := runtimeReceive(t, results)
+		if result.err == nil {
+			claimed++
+			if result.claim.Kind != ActivityCompensation {
+				t.Fatal(result.claim.Kind)
+			}
+		} else if !errors.Is(result.err, ErrNoActivity) {
+			t.Fatal(result.err)
+		}
+	}
+	if claimed != 1 {
+		t.Fatalf("concurrent cleanup claims=%d", claimed)
+	}
+	var active int
+	if err := engine.pool.QueryRow(t.Context(), `SELECT count(*) FROM leases l JOIN activities a ON a.id=l.activity_id WHERE a.workflow_id=$1 AND l.state='active'`, execution.ID).Scan(&active); err != nil || active != 1 {
+		t.Fatalf("active cleanup leases=%d %v", active, err)
+	}
+}
