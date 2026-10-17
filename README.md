@@ -10,7 +10,8 @@ the engine stores progress and coordinates workers through PostgreSQL.
 
 The project is experimental. It supports bounded retries, execution deadlines,
 cooperative cancellation, explicit compensation, and versioned handlers.
-Operator tooling and release qualification remain. See the [roadmap to v1](ROADMAP.md).
+It includes [operator inspection](docs/operations.md) and optional telemetry.
+Release qualification remains. See the [roadmap to v1](ROADMAP.md).
 
 ## Try it
 

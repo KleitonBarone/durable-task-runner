@@ -310,6 +310,17 @@ data, roll back failed starts/purges, and race starts and reads against deletion
 Ten race-detector repetitions pass, as do the full check, full race suite, and
 vulnerability scans. Benchmark/load evidence and remaining operations docs follow.
 
+Checkpoint 38 is `321ca18`; checkpoint 39 is `9b381cf`. Claim/contention,
+100-activity recovery batches, and timeline growth benchmarks ran three times on
+the hardware recorded in `docs/benchmarks.md`. The four-worker load scenario
+completes 200 two-step jobs after 20 lost acknowledgements, with 220 first-step
+deliveries, 200 deduplicated effects, 20 abandoned attempts, and no active leases.
+The full check, full race suite, vulnerability scans, and runnable process
+demonstrations pass. Checkpoint 40 completes operating procedures and publishes
+captured crash, retry/exhaustion, cancellation, and cleanup timelines. The operator
+gate means diagnosis without writing SQL; the CLI still requires database access.
+Local health and telemetry cover database-outage diagnosis.
+
 ## Batch 4. Qualify the release
 
 Branch: `release/v1`. Prerequisite: 3B merged and all earlier gates still passing.

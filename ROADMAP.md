@@ -1,7 +1,7 @@
 # Roadmap to v1
 
 This is the implementation plan for the first complete release. Milestones 0 and
-1, 1A, 1B, milestone 2, and 3A are implemented. Milestone 3B is next.
+1, 1A, 1B, milestone 2, and milestone 3 are implemented. Release qualification is next.
 Every unchecked item below is planned work.
 
 See the [delivery plan](docs/delivery-plan.md) for ordered commits, branches,
@@ -83,7 +83,7 @@ process crashes, scheduler restart, graceful shutdown, and controlled loop tests
 | Failure acknowledgement | Explicit error presence controls failure, including empty messages and handler panics | Implemented in 1B; preserve this distinction in later terminal outcomes |
 | Integration | Typed activities, stable step/effect keys, keyed starts, prior/final results, and external consumer | Implemented in 1B; tagged-module qualification remains in milestone 4 |
 | Evolution | Versioned workflow/handler/cleanup contracts, migration guards, history fixtures, and restored pending work | Implemented in 3A; retain these upgrade checks for releases |
-| Operations | Queries fetch one execution and unbounded activity/history lists | Bounded inspection, attempt details, diagnostics, and retention controls |
+| Operations | Bounded CLI/API inspection, redacted diagnostics, optional telemetry, terminal retention, and measured load | Implemented in 3B; preserve bounded reads and indefinite start-key deduplication |
 
 ## Implementation order
 
@@ -397,28 +397,34 @@ fixtures; upgrade and restore rehearsal.
 - [x] Measure claim latency, ready-work age, handler duration, lease loss, recovery,
   retries, exhaustion, cancellation, and cleanup failure. Use low-cardinality metric
   labels. Hide payloads/effect keys by default and make redaction explicit.
-- [ ] Document health, PostgreSQL connection budgets, polling/batches, clock
+- [x] Document health, PostgreSQL connection budgets, polling/batches, clock
   assumptions, TLS/credentials, and graceful deployment. Keep one scheduler as the
   operating model and test brief overlap safely.
 - [x] Add opt-in terminal-execution retention with bounded deletion batches. Never
   delete active work. Remove related history intentionally under a documented policy,
   and preserve start-key deduplication for its promised lifetime.
-- [ ] Add repeatable database benchmarks for claims, contention, recovery batches,
+- [x] Add repeatable database benchmarks for claims, contention, recovery batches,
   and timeline growth. Publish workload/hardware; use measurements to document
   capacity and tune indexes, not to invent a scale claim.
-- [ ] Publish runnable crash/recovery, retry/exhaustion, cancellation, and cleanup
+- [x] Publish runnable crash/recovery, retry/exhaustion, cancellation, and cleanup
   demonstrations with actual timeline output.
 
 ### Exit gate
 
-- [ ] An operator can explain why a job waits or stops without database access.
+- [x] An operator can explain why a job waits or stops without writing SQL.
 - [x] Test pagination under documented snapshot rules, redaction, retention racing
   with reads, and deduplication lifetime.
-- [ ] A bounded load run has no duplicate active leases or unexplained stuck work.
+- [x] A bounded load run has no duplicate active leases or unexplained stuck work.
   Diagnostics identify slow handlers, absent versions, and database outages.
 
 Suggested PRs: queries/CLI; logs/telemetry; operating guide/retention;
 benchmarks/demonstrations.
+
+The [operator guide](docs/operations.md), [observability](docs/observability.md),
+[failure demonstrations](docs/demonstrations.md), and [measurements](docs/benchmarks.md)
+describe the implemented 3B behavior. CLI integration tests inspect failed, waiting,
+cancelled, and cleanup-failed work through public APIs. Inspection still needs a
+database connection; local health and telemetry diagnose a database outage.
 
 ## 4. Qualify and release v1
 
@@ -466,5 +472,5 @@ state-machine ADR, SQL constraints, tests, and user docs together when semantics
 change. Introduce verification before the feature it must verify, then extend it
 at each milestone.
 
-The next action is milestone 3B after the safe-evolution PR merges.
-Operations and release qualification remain.
+The next action is release qualification after the operations PR merges.
+Candidate-tag verification and v1 publication remain.

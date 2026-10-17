@@ -84,6 +84,75 @@ business lifetime independently of engine history.
 Enable [structured diagnostics and optional OpenTelemetry](observability.md) in
 your application to measure claim age, handler time, recovery, and runtime failures.
 
+## Health and database capacity
+
+`Worker.Health` and `Scheduler.Health` describe their local `Run` loop. A process
+starts unhealthy until its first successful operation. Recorded task failures and
+fenced ownership are task outcomes, not a broken database connection. Inspect
+`Running`, `Healthy`, `ConsecutiveFailures`, and `LastSuccessAt` for process health.
+`LastError` can contain driver details, so redact it before exposing an endpoint.
+`RunOnce` does not maintain loop health. A healthy loop does not prove that every
+pending version has a compatible worker or that a long handler is making progress.
+
+Workers execute one handler per instance. Share a `pgxpool.Pool` with `New` and
+configure `MaxConns` deliberately. Budget connections for concurrent engine
+operations, handler result reads, heartbeats, the scheduler, and inspection,
+plus migration/maintenance headroom. Do not hold an application transaction while
+calling an engine method that needs another pool connection. A starting budget
+for four worker instances is four concurrent handler/result operations, four
+heartbeat/control operations, one scheduler, and two inspection connections.
+This is a planning allowance, not a measured minimum. Include separate handler
+database pools in PostgreSQL's total `max_connections` budget. `Open` uses pgx's
+pool defaults unless its connection string supplies `pool_max_conns`.
+
+Defaults are a 100 ms idle worker poll, a 30 s lease, a heartbeat every 10 s,
+and a database-operation timeout of 5 s. Busy workers claim again immediately.
+The scheduler defaults to a 1 s poll, batches of 100, and a 5 s operation timeout.
+Keep database timeout and heartbeat headroom inside the lease. Increase idle
+polling intervals when latency allows, and measure ready age and database load
+before increasing workers or batch size. See the [recorded benchmarks](benchmarks.md).
+
+Transient connection failures use bounded reconnect waits of 100, 200, 400, 800,
+and 1600 ms. The sixth consecutive failure stops `Run`; application supervision
+decides whether to restart it. Authentication and schema failures stop immediately.
+Lost acknowledgements are recovered through leases, not replayed in memory.
+If PostgreSQL is unavailable, inspection is unavailable too. Use application health
+and `runtime.error` telemetry to distinguish that outage from a task failure.
+
+## Time, credentials, and deployment
+
+Production mutations sample PostgreSQL `clock_timestamp()` after acquiring the
+relevant locks. Keep the database host clock synchronized. A large forward clock
+jump can expire work early; a backward jump delays expiry. Local monotonic timers
+drive waiting and handler-duration measurements, not persisted lease ownership.
+Use `SystemClock` in production and reserve `ManualClock` for tests.
+
+Use encrypted database connections with certificate verification, such as
+`sslmode=verify-full` and a trusted root certificate. The local Compose credentials
+and disabled TLS belong only to disposable development databases. Supply secrets
+through application configuration; avoid printing connection URLs. Restrict network
+access and grant the runtime role only schema usage, table SELECT/INSERT/UPDATE/
+DELETE, and sequence USAGE/SELECT on engine objects. A separate migration owner
+needs DDL rights. Arrange default privileges for future migrations. Inspection can
+use a SELECT-only role; cancellation and migration need their respective rights.
+Do not expose the CLI or sensitive pages as an unauthenticated service.
+
+On shutdown, cancel the worker's `Run` context, wait for its bounded grace period,
+then close the engine/pool. The default grace is 5 s. The handler receives context
+cancellation; if it ignores that request, the instance refuses another handler and
+the process should exit. Unacknowledged work waits for lease recovery. Choose the
+process supervisor's termination allowance longer than the configured grace and
+database timeout. Keep one scheduler running; brief deployment overlap is safe
+under workflow locks and is covered by the bounded load test.
+
+For upgrades, stop new starts if necessary, preserve old handler versions until
+they drain, and apply migrations with the migration owner before starting binaries
+that require the new schema. Follow [upgrade and restore procedures](upgrades.md).
+Take backups that include the migration catalog, start keys, and application effect
+records. Test restoration into an isolated database before relying on a backup.
+Never repair a stopped execution by editing its state. Reconcile the external
+effect and create a linked replacement execution through the public API.
+
 ## Retention and start keys
 
 The scheduler never deletes executions. An application can explicitly call:

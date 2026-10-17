@@ -4,7 +4,7 @@
 
 Durable Task Runner explores how multi-step jobs survive retries, cancellation, and worker failure. Correct state transitions matter more than feature count.
 
-Read `README.md` and `ROADMAP.md` before changing scope. Milestones through 3A are implemented. Milestone 3B is next. Describe later milestones as planned until their exit gates pass.
+Read `README.md` and `ROADMAP.md` before changing scope. Milestones through 3B are implemented. Release qualification is next. Describe release gates as pending until they pass.
 
 ## Product rules
 

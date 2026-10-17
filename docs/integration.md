@@ -89,11 +89,15 @@ unacknowledged; the built-in worker records invalid handler output as task failu
 
 Without a key, starting twice creates two executions. Pass
 `durable.WithStartKey("request-42")` to `Start` to deduplicate concurrent calls
-within a workflow definition name and engine database/schema. Reusing the key
+within a workflow definition name/version and engine database/schema. Reusing the key
 with JSON-equivalent input returns the original execution, including terminal
 executions. Different input returns `ErrStartConflict`. Keys contain 1-200 UTF-8
-bytes without NUL and live as long as the execution row. There is no automatic
-retention. Keep keys private to the application; they are not authentication.
+bytes without NUL and remain reserved indefinitely. Optional terminal retention
+removes execution details but preserves the key and original input. A matching
+start after purge returns `ErrExecutionExpired` with its original execution ID;
+different input still conflicts. See [retention](operations.md#retention-and-start-keys)
+before choosing a data policy. Keep keys private to the application; they are not
+authentication.
 
 A start error may have followed a successful commit. Retry with the same key and
 input to resolve that ambiguity. Use a new key to intentionally start new work.
