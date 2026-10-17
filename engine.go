@@ -101,22 +101,16 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any, op
 			return WorkflowExecution{}, err
 		}
 	}
-	now := e.clock.Now().UTC()
-	execution := WorkflowExecution{
-		ID:             workflowID,
-		DefinitionName: definitionName,
-		StartKey:       key,
-		Input:          encodedInput,
-		State:          WorkflowRunning,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	}
-
 	tx, err := e.pool.Begin(ctx)
 	if err != nil {
 		return WorkflowExecution{}, fmt.Errorf("begin workflow: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	now, err := e.now(ctx, tx)
+	if err != nil {
+		return WorkflowExecution{}, err
+	}
+	execution := WorkflowExecution{ID: workflowID, DefinitionName: definitionName, StartKey: key, Input: encodedInput, State: WorkflowRunning, CreatedAt: now, UpdatedAt: now}
 
 	inserted, err := tx.Exec(ctx, `
 		INSERT INTO workflow_executions (id, definition_name, input, state, created_at, updated_at, start_key)
@@ -181,8 +175,6 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 	if leaseDuration <= 0 {
 		return Claim{}, fmt.Errorf("lease duration must be positive")
 	}
-	now := e.clock.Now().UTC()
-
 	tx, err := e.pool.Begin(ctx)
 	if err != nil {
 		return Claim{}, fmt.Errorf("begin claim: %w", err)
@@ -199,7 +191,7 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 		WHERE a.state = 'ready' AND w.state = 'running'
 		  AND ($1::boolean OR (a.name, a.contract) IN (SELECT * FROM unnest($2::text[], $3::text[])))
 		ORDER BY a.created_at, a.workflow_id, a.position
-		FOR UPDATE OF a SKIP LOCKED
+		FOR UPDATE OF w SKIP LOCKED
 		LIMIT 1`, capabilities == nil, names, contracts).Scan(
 		&claim.ActivityID, &claim.WorkflowID, &claim.ActivityName, &claim.ActivityInput,
 		&claim.AttemptNumber, &currentState, &claim.StepKey, &claim.Position,
@@ -209,6 +201,16 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 	}
 	if err != nil {
 		return Claim{}, fmt.Errorf("select activity to claim: %w", err)
+	}
+	if err := tx.QueryRow(ctx, `SELECT state, attempt_count FROM activities WHERE id=$1 FOR UPDATE`, claim.ActivityID).Scan(&currentState, &claim.AttemptNumber); err != nil {
+		return Claim{}, err
+	}
+	if currentState != ActivityReady {
+		return Claim{}, ErrNoActivity
+	}
+	now, err := e.now(ctx, tx)
+	if err != nil {
+		return Claim{}, err
 	}
 	if err := ValidateActivityTransition(currentState, ActivityRunning); err != nil {
 		return Claim{}, err
@@ -262,10 +264,28 @@ func (e *Engine) Heartbeat(ctx context.Context, claim Claim, extension time.Dura
 	if extension <= 0 {
 		return time.Time{}, fmt.Errorf("heartbeat extension must be positive")
 	}
-	now := e.clock.Now().UTC()
+	tx, err := e.pool.Begin(ctx)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("begin heartbeat: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	_, state, err := lockOwnershipWorkflow(ctx, tx, claim.LeaseToken)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if state != WorkflowRunning {
+		return time.Time{}, ErrLeaseLost
+	}
+	if _, err := tx.Exec(ctx, `SELECT l.id FROM leases l JOIN activities a ON a.id=l.activity_id JOIN attempts at ON at.id=l.attempt_id WHERE l.token=$1 FOR UPDATE OF a, at, l`, claim.LeaseToken); err != nil {
+		return time.Time{}, err
+	}
+	now, err := e.now(ctx, tx)
+	if err != nil {
+		return time.Time{}, err
+	}
 	requestedExpiry := now.Add(extension)
 	var expiresAt time.Time
-	err := e.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE leases l
 		SET heartbeat_at = $2, expires_at = GREATEST(l.expires_at, $3)
 		FROM activities a, attempts at
@@ -282,6 +302,9 @@ func (e *Engine) Heartbeat(ctx context.Context, claim Claim, extension time.Dura
 	}
 	if err != nil {
 		return time.Time{}, fmt.Errorf("heartbeat activity: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return time.Time{}, fmt.Errorf("commit heartbeat: %w", err)
 	}
 	return expiresAt, nil
 }
@@ -304,12 +327,18 @@ func (e *Engine) FailActivity(ctx context.Context, claim Claim, activityErr erro
 }
 
 func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.RawMessage, activityErr error) error {
-	now := e.clock.Now().UTC()
 	tx, err := e.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin activity completion: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	_, workflowState, err := lockOwnershipWorkflow(ctx, tx, claim.LeaseToken)
+	if err != nil {
+		return err
+	}
+	if workflowState != WorkflowRunning {
+		return ErrLeaseLost
+	}
 
 	var workflowID string
 	var position int
@@ -331,6 +360,10 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 	}
 	if err != nil {
 		return fmt.Errorf("lock activity completion: %w", err)
+	}
+	now, err := e.now(ctx, tx)
+	if err != nil {
+		return err
 	}
 	if activityState != ActivityRunning || attemptState != AttemptRunning || leaseState != LeaseActive || !expiresAt.After(now) {
 		return ErrLeaseLost
