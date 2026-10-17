@@ -51,6 +51,11 @@ checkpoint and keep unrelated changes out of commits.
    from stale `main` or silently create a stack to bypass review. Resume from updated
    `main` after the merge. Tag publication is a separate release action below.
 
+For the current delivery run, the user explicitly approved all remaining work,
+commits, pushes, PR merges, and release publication through completion. Apply the
+verification gates and continue between batches without asking again. This does
+not authorize changes to production services or live application databases.
+
 This is eight PR batches with 44 proposed implementation/documentation commits. Prefer
 complete, reviewable behavior over a fixed commit count. Extra correctness fixes
 get their own tested commits and pushes. Each batch produces one draft PR by
