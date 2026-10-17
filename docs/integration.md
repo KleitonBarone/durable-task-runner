@@ -234,8 +234,10 @@ terminal reasons, and restart scenarios.
 
 Terminal executions never reopen. Reconcile effects in your application and start
 a new execution with `WithPredecessor(oldID)` when needed. Use a new start key;
-reusing the old key returns its original terminal execution. There is no
-cancellation API, compensation, or definition versioning yet. Preserve the
+reusing the old key returns its original terminal execution. Use
+`Engine.Cancel(ctx, id, actor, reason)` to request durable cancellation. See
+[cancellation behavior](cancellation.md) for settlement, races, and handler cooperation.
+Compensation and definition versioning remain planned. Preserve the
 meaning of registered workflow and activity names until their executions finish.
 
 See [ADR 0002](decisions/0002-state-machine-and-failure-model.md) for transitions,

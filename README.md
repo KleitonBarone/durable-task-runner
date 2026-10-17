@@ -8,9 +8,9 @@ Use it for jobs such as imports or account provisioning where losing progress
 between steps would leave work unfinished. Your application supplies Go handlers;
 the engine stores progress and coordinates workers through PostgreSQL.
 
-The project is experimental. The durable core includes bounded retries and
-execution deadlines. Cancellation, compensation, and safe workflow version
-upgrades are still planned. See the [roadmap to v1](ROADMAP.md).
+The project is experimental. The durable core includes bounded retries,
+execution deadlines, and cooperative cancellation. Compensation and safe workflow
+version upgrades are still planned. See the [roadmap to v1](ROADMAP.md).
 
 ## Try it
 
@@ -81,6 +81,9 @@ minutes and workflows to 24 hours; heartbeats cannot extend these limits. See
 [retry and deadline options](docs/retries.md). The worker continues to other jobs.
 The last step's output is the workflow result. Keep definitions and handlers
 compatible while executions are in progress.
+
+Applications can [cancel an execution](docs/cancellation.md). A committed request
+stops forward progress and asks handlers to stop; it does not undo external effects.
 
 ## Development
 

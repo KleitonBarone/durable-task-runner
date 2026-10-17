@@ -177,6 +177,9 @@ another job. Ten repetitions exposed an early host-timer cancellation race; the
 worker now verifies expiry with database time before cancelling. Ten repetitions
 then passed. Terminal reconciliation starts a linked new execution.
 
+Checkpoint 21 is `6004884`; all four CI jobs passed and a fresh module cache
+installed that exact pushed revision successfully. PR #3 merged at `0e294e2`.
+
 ## Batch 2B. Cancel executions safely
 
 Branch: `feat/cancellation`. Prerequisite: 2A merged.
@@ -187,6 +190,17 @@ Branch: `feat/cancellation`. Prerequisite: 2A merged.
 | 23 | `feat(engine): persist and settle cancellation requests` | Add request/query APIs, state constraints, atomic claim prevention, idempotent requests, and consistent lock order. Cover cancel/claim/complete/expiry races. Gates C and R. |
 | 24 | `feat(worker): honor durable cancellation requests` | Deliver cooperative cancellation through control checks/heartbeats, bound settlement, and reject late acknowledgements. Test retry waits and non-cooperative handlers. Gates C and R. |
 | 25 | `test(e2e): verify cancellation across worker restarts` | Add live-process cancellation/restart examples, assert no later forward step runs, document guarantees, and complete 2B. Gates D, C, R, and X. |
+
+Checkpoints 22 and 23 are `97037e2` and `2ab5bbd`, in
+[PR #4](https://github.com/KleitonBarone/durable-task-runner/pull/4).
+The worker already uses ownership loss to cancel handlers and bound their grace
+period. Checkpoint 24 therefore needs focused tests rather than another control
+mechanism; it ships with checkpoint 25's process scenario and documentation.
+Ten repetitions passed for cancellation racing with claim/completion/recovery
+and for cooperative/non-cooperative handlers. The process scenario cancels after
+an effect, observes context cancellation, restarts both runtime processes, fences
+the saved stale token, and proves no successor claim. A history-write failure
+rolls back cancellation metadata, attempt closure, and ownership together.
 
 Push each passing commit. Preserve transaction-order evidence in tests and ensure
 cancellation never claims to stop an external effect that already happened.

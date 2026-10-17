@@ -68,10 +68,11 @@ func TestProcessFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := os.Getenv("DURABLE_PROCESS_ID")
-	barrier := func() error {
-		_, err := pool.Exec(ctx, `INSERT INTO fixture_barriers (worker) VALUES ($1)`, id)
+	barrierID := func(suffix string) error {
+		_, err := pool.Exec(ctx, `INSERT INTO fixture_barriers (worker) VALUES ($1)`, id+suffix)
 		return err
 	}
+	barrier := func() error { return barrierID("") }
 	switch role {
 	case "scheduler":
 		scheduler, err := durable.NewScheduler(engine, 20*time.Millisecond, 100)
@@ -120,11 +121,16 @@ func TestProcessFixture(t *testing.T) {
 				if _, err := pool.Exec(ctx, `INSERT INTO fixture_effects (worker, step, effect_key) VALUES ($1, $2, $3) ON CONFLICT (effect_key) DO NOTHING`, id, step, effectKey); err != nil {
 					return "", err
 				}
-				if step == "effect" && (window == "after" || window == "dedup") {
+				if step == "effect" && (window == "after" || window == "dedup" || window == "cancel") {
 					if err := barrier(); err != nil {
 						return "", err
 					}
 					<-ctx.Done()
+					if window == "cancel" {
+						if err := barrierID("-cancelled"); err != nil {
+							return "", err
+						}
+					}
 					return "", ctx.Err()
 				}
 				return input, nil
@@ -548,4 +554,71 @@ func TestProcessRepeatedCrashesExhaustClaimBudget(t *testing.T) {
 	}
 	scheduler.stop(t)
 	t.Log("three crashed worker processes exhausted the persisted claim budget")
+}
+
+func TestProcessCancellationSurvivesWorkerAndSchedulerRestart(t *testing.T) {
+	engine, pool, databaseURL := processTestEngine(t)
+	execution, err := durable.Start(t.Context(), engine, processDefinition, "cancel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler := startFixture(t, "scheduler", "cancel-scheduler-A", databaseURL, "", durable.Claim{})
+	worker := startFixture(t, "worker", "cancel-worker-A", databaseURL, "cancel", durable.Claim{})
+	waitBarrier := func(name string, processes ...*fixtureProcess) {
+		t.Helper()
+		waitProcessState(t, processes, func() bool {
+			var exists bool
+			err := pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM fixture_barriers WHERE worker=$1)`, name).Scan(&exists)
+			return err == nil && exists
+		})
+	}
+	waitBarrier("cancel-worker-A", scheduler, worker)
+	var stale durable.Claim
+	if err := pool.QueryRow(t.Context(), `SELECT l.token,l.activity_id,l.attempt_id FROM leases l JOIN activities a ON a.id=l.activity_id WHERE a.workflow_id=$1 AND l.state='active'`, execution.ID).Scan(&stale.LeaseToken, &stale.ActivityID, &stale.AttemptID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Cancel(t.Context(), execution.ID, "process-test", "cancel after fake effect"); err != nil {
+		t.Fatal(err)
+	}
+	waitBarrier("cancel-worker-A-cancelled", scheduler, worker)
+	waitProcessState(t, []*fixtureProcess{scheduler, worker}, func() bool {
+		state, err := engine.Workflow(t.Context(), execution.ID)
+		return err == nil && state.State == durable.WorkflowCancelled
+	})
+	worker.kill(t)
+	scheduler.kill(t)
+	schedulerB := startFixture(t, "scheduler", "cancel-scheduler-B", databaseURL, "", durable.Claim{})
+	workerB := startFixture(t, "worker", "cancel-worker-B", databaseURL, "", durable.Claim{})
+	waitBarrier("cancel-scheduler-B", schedulerB, workerB)
+	healthy, err := durable.Start(t.Context(), engine, processDefinition, "after cancellation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitProcessState(t, []*fixtureProcess{schedulerB, workerB}, func() bool {
+		state, err := engine.Workflow(t.Context(), healthy.ID)
+		return err == nil && state.State == durable.WorkflowCompleted
+	})
+	staleWorker := startFixture(t, "stale", "cancel-stale", databaseURL, "", stale)
+	if err := staleWorker.wait(t); err != nil {
+		t.Fatal(err)
+	}
+	activities, err := engine.Activities(t.Context(), execution.ID)
+	if err != nil || len(activities) != 2 || activities[0].State != durable.ActivityCancelled || activities[1].State != durable.ActivityCancelled || activities[1].AttemptCount != 0 {
+		t.Fatalf("cancelled plan: %#v %v", activities, err)
+	}
+	var laterEffects int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM fixture_deliveries WHERE workflow_id=$1 AND step='finish'`, execution.ID).Scan(&laterEffects); err != nil || laterEffects != 0 {
+		t.Fatalf("later effects=%d %v", laterEffects, err)
+	}
+	events, err := engine.Timeline(t.Context(), execution.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var types []string
+	for _, event := range events {
+		types = append(types, event.Type)
+	}
+	workerB.stop(t)
+	schedulerB.stop(t)
+	t.Logf("cancellation survived worker/scheduler restart; no successor claim; stale result fenced; timeline=%v", types)
 }

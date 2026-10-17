@@ -145,7 +145,7 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any, op
 		} else if err != nil {
 			return WorkflowExecution{}, err
 		}
-		if state != WorkflowCompleted && state != WorkflowFailed && state != WorkflowTimedOut {
+		if !terminalWorkflow(state) {
 			return WorkflowExecution{}, fmt.Errorf("%w: predecessor must be terminal", ErrInvalidInput)
 		}
 	}

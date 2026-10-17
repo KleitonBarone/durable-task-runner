@@ -4,7 +4,7 @@
 
 Durable Task Runner explores how multi-step jobs survive retries, cancellation, and worker failure. Correct state transitions matter more than feature count.
 
-Read `README.md` and `ROADMAP.md` before changing scope. Milestones 0, 1, 1A, 1B, and 2A are implemented. Milestone 2B is next. Describe later milestones as planned until their exit gates pass.
+Read `README.md` and `ROADMAP.md` before changing scope. Milestones through 2B are implemented. Milestone 2C is next. Describe later milestones as planned until their exit gates pass.
 
 ## Product rules
 
@@ -38,7 +38,7 @@ go run ./cmd/dev race
 
 Use `go run ./cmd/dev test -run TestName .` for focused unit work. Explicit `integration` runs require `DURABLE_TEST_DATABASE_URL` pointing to a disposable database and fail when it is missing. See `CONTRIBUTING.md` for direct Go commands, WSL behavior, diagnostics, and targeted repetitions.
 
-Use deterministic tests with a controllable clock. Cover worker crashes between side effects and acknowledgements, expired leases, duplicate delivery, concurrent claims, invalid transitions, recovery, retry exhaustion, and deadline races. Add cancellation races and compensation failure tests with those features.
+Use deterministic tests with a controllable clock. Cover worker crashes between side effects and acknowledgements, expired leases, duplicate delivery, concurrent claims, invalid transitions, recovery, retry exhaustion, deadline/cancellation races, and non-cooperative handlers. Add compensation failure tests with that feature.
 
 Do not use real third-party services in tests. Model activities with deterministic fakes and explicit failure injection.
 

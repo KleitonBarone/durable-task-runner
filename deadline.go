@@ -29,7 +29,9 @@ func (e *Engine) settleDeadline(ctx context.Context, tx pgx.Tx, id, token string
 	return err == nil, err
 }
 
-func (e *Engine) timeoutWorkflow(ctx context.Context, tx pgx.Tx, id, reason string, now time.Time) error {
+// stopActivities runs under the workflow lock and fences ownership atomically
+// with stopping pending work. It never waits for an application handler.
+func stopActivities(ctx context.Context, tx pgx.Tx, id string, activityState ActivityState, attemptState AttemptState, reason string, now time.Time) error {
 	rows, err := tx.Query(ctx, `SELECT id FROM activities WHERE workflow_id=$1 AND state IN ('blocked','ready','retry_wait','running') ORDER BY position FOR UPDATE`, id)
 	if err != nil {
 		return err
@@ -70,20 +72,27 @@ func (e *Engine) timeoutWorkflow(ctx context.Context, tx pgx.Tx, id, reason stri
 		if _, err := tx.Exec(ctx, `UPDATE leases SET state='expired',ended_at=$2 WHERE id=$1`, d.leaseID, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE attempts SET state='timed_out',ended_at=$2,error_text=$3,retry_decision='stop' WHERE id=$1`, d.attemptID, now, reason); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE attempts SET state=$4,ended_at=$2,error_text=$3,retry_decision='stop' WHERE id=$1`, d.attemptID, now, reason, attemptState); err != nil {
 			return err
 		}
-		if err := appendHistory(ctx, tx, id, &d.activityID, &d.attemptID, "attempt.timed_out", map[string]any{"reason": reason}, now); err != nil {
+		if err := appendHistory(ctx, tx, id, &d.activityID, &d.attemptID, "attempt."+string(attemptState), map[string]any{"reason": reason}, now); err != nil {
 			return err
 		}
 	}
 	for _, activityID := range activities {
-		if _, err := tx.Exec(ctx, `UPDATE activities SET state='timed_out',updated_at=$2,completed_at=$2,last_error=$3 WHERE id=$1`, activityID, now, reason); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE activities SET state=$4,updated_at=$2,completed_at=$2,last_error=$3 WHERE id=$1`, activityID, now, reason, activityState); err != nil {
 			return err
 		}
-		if err := appendHistory(ctx, tx, id, &activityID, nil, "activity.timed_out", map[string]any{"reason": reason}, now); err != nil {
+		if err := appendHistory(ctx, tx, id, &activityID, nil, "activity."+string(activityState), map[string]any{"reason": reason}, now); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (e *Engine) timeoutWorkflow(ctx context.Context, tx pgx.Tx, id, reason string, now time.Time) error {
+	if err := stopActivities(ctx, tx, id, ActivityTimedOut, AttemptTimedOut, reason, now); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE workflow_executions SET state='timed_out',terminal_reason=$2,last_error=$2,updated_at=$3,completed_at=$3 WHERE id=$1 AND state='running'`, id, reason, now); err != nil {
 		return fmt.Errorf("time out workflow: %w", err)
