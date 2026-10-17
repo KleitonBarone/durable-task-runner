@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"unicode/utf8"
 )
 
 type StartOption struct {

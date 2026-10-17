@@ -495,8 +495,10 @@ func TestProcessHangingHandlerTimesOutWhileAnotherJobProgresses(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if t.Failed() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
 			for _, id := range []string{execution.ID, healthy.ID} {
-				state, err := engine.Workflow(context.Background(), id)
+				state, err := engine.Workflow(ctx, id)
 				t.Logf("deadline diagnostic: %#v %v", state, err)
 			}
 		}

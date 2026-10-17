@@ -56,3 +56,35 @@ Workers cancel handler contexts on deadline, even when heartbeats are healthy.
 Handlers must cooperate and bound their own external calls. A timed-out external
 effect may still finish; engine fencing cannot undo it. Non-cooperative handlers
 stop reuse of that worker instance after its shutdown grace period.
+
+## Reconcile terminal work
+
+Read the workflow's terminal reason and last error, then inspect attempts and
+the timeline before deciding which effects need reconciliation. Do not assume a
+failed or timed-out handler performed no effect. A new start can include
+`durable.WithPredecessor(oldID)` to record the terminal execution it repairs.
+It receives new activity/effect identities. Choose application business keys
+when an effect must deduplicate across separate executions.
+
+## Reproduce the process scenarios
+
+These commands create isolated PostgreSQL and clean up their containers:
+
+```sh
+go run ./cmd/dev e2e -run TestProcessRetryBackoffSurvivesSchedulerRestart .
+go run ./cmd/dev e2e -run TestProcessRepeatedCrashesExhaustClaimBudget .
+go run ./cmd/dev e2e -run TestProcessHangingHandlerTimesOutWhileAnotherJobProgresses .
+```
+
+Observed output from these scenarios:
+
+```text
+scheduler/worker restart preserved due=2026-10-16 21:27:56.356324 -0300 -03; second attempt started=2026-10-16 21:27:56.371727 -0300 -03
+three crashed worker processes exhausted the persisted claim budget
+healthy heartbeats did not extend the hanging attempt; same worker completed another workflow
+```
+
+The retry timeline contains `activity.retry_scheduled`, then `activity.ready`,
+then the replacement claim. A timed-out attempt records `attempt.timed_out` and
+the execution ends with `workflow.timed_out`. Tests assert persisted outcomes;
+their bounded polling waits are not the evidence of success.

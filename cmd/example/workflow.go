@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	durable "github.com/KleitonBarone/durable-task-runner"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -36,7 +37,9 @@ var welcomeWorkflow = durable.Define("welcome_customer", func(input welcomeInput
 	if strings.TrimSpace(input.AccountID) == "" || strings.TrimSpace(input.Email) == "" {
 		return nil, errors.New("account ID and email are required")
 	}
-	account, err := createAccount.Step("account", accountInput{AccountID: input.AccountID})
+	account, err := createAccount.Step("account", accountInput{AccountID: input.AccountID},
+		durable.WithRetry(durable.RetryPolicy{MaxAttempts: 3, RetryErrors: true, InitialInterval: time.Second}),
+		durable.WithAttemptTimeout(30*time.Second))
 	if err != nil {
 		return nil, err
 	}

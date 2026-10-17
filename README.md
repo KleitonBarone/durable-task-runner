@@ -8,9 +8,9 @@ Use it for jobs such as imports or account provisioning where losing progress
 between steps would leave work unfinished. Your application supplies Go handlers;
 the engine stores progress and coordinates workers through PostgreSQL.
 
-The project is experimental. The durable execution core works, but retries,
-timeouts, cancellation, compensation, and safe workflow version upgrades are
-still planned. See the [roadmap to v1](ROADMAP.md).
+The project is experimental. The durable core includes bounded retries and
+execution deadlines. Cancellation, compensation, and safe workflow version
+upgrades are still planned. See the [roadmap to v1](ROADMAP.md).
 
 ## Try it
 
@@ -67,7 +67,7 @@ State changes and their history events commit together.
 
 Workers hold expiring leases and heartbeat while handling an activity. If a worker
 disappears, the scheduler abandons its attempt and makes the activity available
-again. The old lease token can no longer acknowledge it.
+again within its attempt budget. The old lease token can no longer acknowledge it.
 
 Activity delivery is **at least once**. A worker can perform a side effect and
 crash before recording success, so another worker may repeat it. Your handlers
@@ -75,9 +75,12 @@ must use application-level idempotency or deduplication. Handler metadata includ
 a stable effect key for this purpose. The engine does not provide exactly-once
 side effects.
 
-A handler error fails its workflow; the worker continues to other jobs. The last
-step's output is the workflow result. Keep definitions and handlers compatible
-while executions are in progress.
+A handler error fails its workflow unless its step opts into bounded retries.
+The default budget is three claims, including crashes. Attempts default to five
+minutes and workflows to 24 hours; heartbeats cannot extend these limits. See
+[retry and deadline options](docs/retries.md). The worker continues to other jobs.
+The last step's output is the workflow result. Keep definitions and handlers
+compatible while executions are in progress.
 
 ## Development
 

@@ -48,3 +48,19 @@ application deduplication remain necessary. Terminal executions never reopen;
 reconciliation starts a new execution and may record its predecessor.
 
 Cancellation and compensation are specified separately in milestones 2B/2C.
+
+## Current transitions
+
+```text
+workflow: running -> completed | failed | timed_out
+activity: blocked -> ready -> running -> completed | failed | timed_out
+          running -> retry_wait -> ready
+          running -> ready                 abandoned immediate redelivery
+          blocked | ready | retry_wait -> timed_out
+attempt:  running -> completed | failed | abandoned | timed_out
+lease:    active -> released | expired
+```
+
+Terminal workflows cannot claim or acknowledge work. No transition resets the
+attempt count. A retry closes its old attempt and lease before making a later
+claim possible. At most one active lease per activity remains database-enforced.

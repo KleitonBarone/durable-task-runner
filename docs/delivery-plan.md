@@ -5,8 +5,8 @@ defines scope and acceptance criteria; this document defines how to deliver that
 scope. Commits 00 through 06 implement the planning baseline and milestone 1A on
 `build/dev-loop`, merged in [PR #1](https://github.com/KleitonBarone/durable-task-runner/pull/1)
 at `e85ffb6` with user approval. Commits 07 through 15 implement milestone 1B on
-`feat/integration-api`, reviewed in [draft PR #2](https://github.com/KleitonBarone/durable-task-runner/pull/2).
-That batch needs its merge checkpoint before milestone 2A begins.
+`feat/integration-api`, merged in [PR #2](https://github.com/KleitonBarone/durable-task-runner/pull/2)
+at `87dd370`. Milestone 2A is in [PR #3](https://github.com/KleitonBarone/durable-task-runner/pull/3).
 
 ## Planning baseline
 
@@ -168,6 +168,14 @@ Branch: `feat/retries-timeouts`. Prerequisite: 1B merged.
 
 Push each verified commit. Review the persisted-state/history consistency and finite
 budget evidence before considering the batch ready to merge.
+
+Checkpoints 16-20 are `1efbe8d`, `1b37cf1`, `ea1a62b`, `f3a7e23`, and `9629b67`.
+Full checks, race checks, and the standalone consumer passed. Process tests prove
+durable backoff across scheduler/worker restarts, three crashed processes exhausting
+their claim budget, and a hanging handler timing out while its worker completes
+another job. Ten repetitions exposed an early host-timer cancellation race; the
+worker now verifies expiry with database time before cancelling. Ten repetitions
+then passed. Terminal reconciliation starts a linked new execution.
 
 ## Batch 2B. Cancel executions safely
 

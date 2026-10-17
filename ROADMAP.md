@@ -1,7 +1,7 @@
 # Roadmap to v1
 
 This is the implementation plan for the first complete release. Milestones 0 and
-1, the milestone 1A verification loop, and milestone 1B are implemented. Milestone 2A is next.
+1, the milestone 1A verification loop, milestone 1B, and milestone 2A are implemented. Milestone 2B is next.
 Every unchecked item below is planned work.
 
 See the [delivery plan](docs/delivery-plan.md) for ordered commits, branches,
@@ -246,36 +246,36 @@ policy in the plan so a deployment cannot silently change it.
 
 ### Deliverables
 
-- [ ] Define retryable/permanent failures, maximum attempts, capped backoff, and
+- [x] Define retryable/permanent failures, maximum attempts, capped backoff, and
   deterministic jitter testing. Default handler-error retries off unless the caller
   opts in. Establish a separate finite total claim budget so abandonment can cause
   redelivery without enabling handler-error retries. Document bounded defaults as
   a prerelease change from today's unlimited crash recovery.
-- [ ] Persist the next eligible time and retry decision with the failed/abandoned
+- [x] Persist the next eligible time and retry decision with the failed/abandoned
   attempt. No in-memory sleep implements durable backoff. Recovery and retry
   scheduling must be idempotent across scheduler restarts.
-- [ ] Define which failures consume the budget. For v1, every claimed attempt
+- [x] Define which failures consume the budget. For v1, every claimed attempt
   consumes one, including abandonment; expose this in history. A finite budget
   must stop repeated crash-and-reclaim cycles.
-- [ ] Support per-attempt execution limits and an overall workflow deadline.
+- [x] Support per-attempt execution limits and an overall workflow deadline.
   Distinguish deadlines from lease expiry, which detects lost ownership. Heartbeats
   cannot extend attempts or workflows beyond configured deadlines.
-- [ ] Establish one production time authority across processes, preferably PostgreSQL
+- [x] Establish one production time authority across processes, preferably PostgreSQL
   time sampled after acquiring relevant locks. Keep test time injectable. Cover
   stale pre-lock timestamps, clock skew, and boundary equality.
-- [ ] On timeout, fence the attempt before another delivery becomes eligible and
+- [x] On timeout, fence the attempt before another delivery becomes eligible and
   cancel the handler context cooperatively. Late external side effects still need
   the application's deduplication strategy.
-- [ ] Expose exhaustion and timeout outcomes, attempt details, next-eligible time,
+- [x] Expose exhaustion and timeout outcomes, attempt details, next-eligible time,
   and terminal reason. Keep failed executions terminal; later manual work starts
   a new execution linked to the old one.
 
 ### Exit gate
 
-- [ ] Manual-clock tests cover due boundaries, backoff caps, error classification,
+- [x] Manual-clock tests cover due boundaries, backoff caps, error classification,
   exhaustion, abandonment consuming a budget, heartbeat/deadline races, scheduler
   restart, stale completion, and completion racing with timeout.
-- [ ] Process tests prove restart during backoff preserves the due time, a hanging
+- [x] Process tests prove restart during backoff preserves the due time, a hanging
   handler times out despite heartbeats, and another job still progresses.
 
 Suggested PRs: policy/state ADR; durable due times and scheduling; deadlines;
@@ -462,5 +462,5 @@ state-machine ADR, SQL constraints, tests, and user docs together when semantics
 change. Introduce verification before the feature it must verify, then extend it
 at each milestone.
 
-The next action is milestone 2A after review and merge of the integration PR.
-Milestone 2 and later execution features remain unimplemented.
+The next action is milestone 2B after the retry/deadline PR merges.
+Cancellation, compensation, upgrades, operations, and release qualification remain.
