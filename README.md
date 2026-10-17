@@ -28,9 +28,9 @@ These commands also work in PowerShell. If Docker is installed only inside WSL,
 the development command uses the Ubuntu distribution automatically.
 
 The example runs a two-step customer welcome workflow and prints its execution
-timeline, ending in `workflow.completed`. Both handlers are local fakes; they do
-not create real accounts or send email. The example runs in one process and does
-not start a continuous scheduler.
+timeline and final result. Both handlers are local fakes; they do not create real
+accounts or send email. The demo runs worker and scheduler loops in one process,
+then shuts them down. Its other modes run those loops in separate processes.
 
 Stop PostgreSQL with `go run ./cmd/dev down`. Its development volume is preserved.
 
@@ -39,20 +39,25 @@ Stop PostgreSQL with `go run ./cmd/dev down`. Its development volume is preserve
 Start with the complete [Go example](cmd/example/main.go) and the
 [integration guide](docs/integration.md).
 
-1. Define a workflow that turns typed input into a fixed sequence of activities.
+1. Declare typed activities and give each step a stable key in a linear plan.
 2. Register the definition and open an engine connected to PostgreSQL.
-3. Apply the embedded migrations, then start an execution.
+3. Apply the embedded migrations, then start an execution with an optional deduplication key.
 4. Register typed activity handlers and run workers.
-5. Run one scheduler to recover expired leases. Read status and history through
-   the engine's query methods.
+5. Run one scheduler to recover expired leases. Read prior-step results in handlers
+   and inspect final results, attempts, and history through public APIs.
 
 Workers can run as separate processes. The library provides worker and scheduler
 loops; your application owns their configuration and lifecycle. No message broker
 or separate control service is required.
 
-Install an exact pushed revision with `go get
-github.com/KleitonBarone/durable-task-runner@<commit>`. The module path is verified
-from a separate consumer without a local replacement. A release tag is still planned.
+Install an exact pushed revision, replacing `<commit>` with its SHA:
+
+```sh
+go get github.com/KleitonBarone/durable-task-runner@<commit>
+```
+
+Installation is verified from a separate consumer without a local replacement.
+A release tag is still planned.
 
 ## What survives a crash?
 
@@ -66,18 +71,20 @@ again. The old lease token can no longer acknowledge it.
 
 Activity delivery is **at least once**. A worker can perform a side effect and
 crash before recording success, so another worker may repeat it. Your handlers
-must use application-level idempotency or deduplication. The engine does not
-provide exactly-once side effects.
+must use application-level idempotency or deduplication. Handler metadata includes
+a stable effect key for this purpose. The engine does not provide exactly-once
+side effects.
 
-A handler error currently fails the workflow. Typed handlers can read completed
-earlier-step results, and the last step's output is the workflow result. Keep
-definitions and handlers compatible while executions are in progress.
+A handler error fails its workflow; the worker continues to other jobs. The last
+step's output is the workflow result. Keep definitions and handlers compatible
+while executions are in progress.
 
 ## Development
 
 Run all checks with `go run ./cmd/dev check`. It starts disposable PostgreSQL,
 runs formatting, static analysis, unit and integration tests, kills and recovers
-real worker processes, runs the example, and removes its test containers.
+real worker processes, runs the example and a separate consumer module, and
+removes its test containers.
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) for focused tests, race checks, and debugging.
 See the [roadmap](ROADMAP.md) for the remaining work through v1.

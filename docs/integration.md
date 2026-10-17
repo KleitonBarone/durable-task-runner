@@ -8,7 +8,9 @@ This guide describes implemented behavior. Planned APIs and release gates live i
 [cmd/example/main.go](../cmd/example/main.go) is a complete program using only the
 public Go package. It defines typed workflow input, creates two activity specs,
 registers the workflow and typed handlers, opens PostgreSQL, applies migrations,
-starts an execution, runs its handlers, and prints the timeline.
+starts an execution, runs its handlers, and prints the timeline. The shared typed
+definitions and deduplicated fake service are in [workflow.go](../cmd/example/workflow.go).
+The final email step reads the account result through its handler context.
 
 Install an exact pushed revision with
 `go get github.com/KleitonBarone/durable-task-runner@<commit>`.
@@ -16,11 +18,44 @@ Install an exact pushed revision with
 `DURABLE_CONSUMER_VERSION` to a pushed SHA to use a fresh module cache without
 local replacements. There is no release tag yet.
 
+The default example starts worker and scheduler loops in one process and shuts
+them down after completion. For separate processes, start local PostgreSQL, set
+`DATABASE_URL` to its URL, and run migrations once. For the local Compose database,
+set the URL in PowerShell with
+`$env:DATABASE_URL = 'postgres://durable:durable@localhost:54329/durable?sslmode=disable'`
+or in a POSIX shell with
+`export DATABASE_URL='postgres://durable:durable@localhost:54329/durable?sslmode=disable'`.
+
+```sh
+go run ./cmd/dev up
+go run ./cmd/example -role migrate
+```
+
+In two terminals using that URL, run:
+
+```sh
+go run ./cmd/example -role worker
+go run ./cmd/example -role scheduler
+```
+
+In another terminal, start and inspect an execution:
+
+```sh
+go run ./cmd/example -role start -key welcome/account-42
+go run ./cmd/example -role status -id <printed-workflow-id>
+```
+
+Repeating the same start key returns the same execution. Use a new key for a new
+execution. Stop the worker and scheduler with Ctrl+C, then stop PostgreSQL with
+`go run ./cmd/dev down`. Each process uses `signal.NotifyContext`, waits for runtime
+shutdown, and closes its own pool. The `verify` mode automates this process setup
+with bounded child lifetimes and checks results, attempts, and fake effects.
+
 ## Define and persist the work
 
 `durable.Define` associates a name with a typed input and a function returning a
-linear `[]durable.ActivitySpec`. Use `durable.NewActivity` to serialize a step's
-input. Register the definition with `durable.Register` before starting it.
+linear `[]durable.ActivitySpec`. Use a typed activity's `Step` method to serialize
+its input. Register the definition with `durable.Register` before starting it.
 
 The plan function runs before the persistence transaction. Keep it deterministic
 and free of side effects. It must return at least one activity. `durable.Start`
@@ -47,8 +82,10 @@ after successful completion. `Engine.Workflow` also includes the raw final outpu
 Each workflow input, step input, and output has a 1 MiB encoded JSON limit.
 Payloads must be valid UTF-8 JSON without NUL strings or numbers outside float64
 decoding range. The standard `encoding/json` rules apply, including unknown-field
-handling. Invalid payloads return `ErrInvalidInput`; oversized ones also match
-`ErrPayloadTooLarge`. Invalid completion output leaves the lease unacknowledged.
+handling. PostgreSQL jsonb constraints also apply, including rejection of unpaired
+surrogate escapes. Invalid payloads return `ErrInvalidInput`; oversized ones also match
+`ErrPayloadTooLarge`. Invalid low-level completion output leaves the lease
+unacknowledged; the built-in worker records invalid handler output as task failure.
 
 Without a key, starting twice creates two executions. Pass
 `durable.WithStartKey("request-42")` to `Start` to deduplicate concurrent calls
@@ -70,7 +107,9 @@ the pool; closing the engine does not close that supplied pool.
 
 Call `Engine.Migrate` explicitly as a deployment/setup step before processing work.
 Migrations are embedded in the binary and serialized with a PostgreSQL transaction
-advisory lock. The example applies them at startup for convenience.
+advisory lock. The example's `migrate`, `demo`, and `verify` modes apply them.
+Standalone `worker`, `scheduler`, `start`, and `status` modes expect setup to have
+completed already.
 
 Use a database/schema dedicated to engine tables. Production connection security,
 credentials, access controls, and backups belong to the hosting application. The
@@ -78,7 +117,7 @@ Compose credentials in this repository are for local development.
 
 ## Run workers and one scheduler
 
-Register handlers with `durable.Handle`. `durable.NewWorker` takes an engine,
+Register handlers with a typed activity's `Handle` method. `durable.NewWorker` takes an engine,
 configuration, and registrations. Only the worker ID and at least one handler are
 required. Zero configuration values select defaults: a 30-second lease, heartbeat
 at one third of the lease, 100 ms polling, database operations bounded by the
@@ -167,6 +206,7 @@ alive indefinitely today, so applications must bound their own external calls.
 - `Engine.Workflow(ctx, id)` reads current workflow status.
 - `Engine.Activities(ctx, id)` reads ordered activities and their stored outputs.
 - `Engine.Timeline(ctx, id)` reads history in database sequence order.
+- `Engine.Attempts(ctx, activityID)` reads attempt numbers, workers, outcomes, and errors.
 
 A recovered activity has history such as:
 
@@ -191,4 +231,5 @@ compensation steps, definition versions, or operator redrive API yet. Preserve t
 meaning of registered workflow and activity names until their executions finish.
 
 See [ADR 0002](decisions/0002-state-machine-and-failure-model.md) for transitions,
-invariants, and the side-effect/acknowledgement failure window.
+invariants, and the side-effect/acknowledgement failure window, and
+[ADR 0003](decisions/0003-public-integration-contract.md) for API guarantees.

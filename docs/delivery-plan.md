@@ -3,9 +3,10 @@
 This is the commit and push sequence for [ROADMAP.md](../ROADMAP.md). The roadmap
 defines scope and acceptance criteria; this document defines how to deliver that
 scope. Commits 00 through 06 implement the planning baseline and milestone 1A on
-`build/dev-loop`, reviewed in [draft PR #1](https://github.com/KleitonBarone/durable-task-runner/pull/1).
-Milestone 1B and later batches remain pending. The first PR still needs its merge
-checkpoint before the next batch begins.
+`build/dev-loop`, merged in [PR #1](https://github.com/KleitonBarone/durable-task-runner/pull/1)
+at `e85ffb6` with user approval. Commits 07 through 15 implement milestone 1B on
+`feat/integration-api`, reviewed in [draft PR #2](https://github.com/KleitonBarone/durable-task-runner/pull/2).
+That batch needs its merge checkpoint before milestone 2A begins.
 
 ## Planning baseline
 
@@ -109,6 +110,8 @@ all three process scenarios. Linux Go 1.24/1.26 checks, the Linux race job, and 
 Windows tooling checks passed on `d00254a`. Commit 06 updates the docs and roadmap;
 the PR must also be green on its final SHA before the merge checkpoint.
 
+PR #1 passed all four checks on `a08168f` and merged with authorization at `e85ffb6`.
+
 ## Batch 1B. Finish the public integration contract
 
 Branch: `feat/integration-api`. Prerequisite: 1A merged and its gate reproducible.
@@ -128,6 +131,22 @@ Branch: `feat/integration-api`. Prerequisite: 1A merged and its gate reproducibl
 Push every passing commit. Verify the installed remote commit uses no local
 replacement; the development fixture may use one. Do not advertise a tagged
 installation yet. Candidate-tag verification belongs to batch 4.
+
+Implemented checkpoints 07-14 are `4574b41`, `3115547`, `343b30b`, `14333ac`,
+`4546ad2`, `45b03e8`, `fe47384`, and `98e4623`. Each was checked, committed, and
+pushed. Checkpoint 15 supplies the shared runnable example and completes the
+acceptance gate. The standalone consumer exercises actual migrate/start/status
+entry points and separate worker/scheduler processes. Crash recovery also proves
+two deliveries with one deduplicated effect, alongside the original duplicate
+effect demonstration. Full checks, race checks, and pushed-module installation
+are required on the final batch state before requesting its merge.
+
+Final review added two focused correctness commits: `7d1184f` preserves reusable
+plan slices during concurrent starts, and `999ef6d` preserves stable
+error classification for JSON that PostgreSQL rejects. Both had failing-before
+and passing-after regression evidence. The final full check and race gate passed.
+Concurrent keyed starts, capability filtering, reconnect, and unresponsive-handler
+checks also passed ten targeted repetitions each.
 
 ## Batch 2A. Bound retries, ownership, and execution time
 

@@ -2,25 +2,37 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // consumer builds outside the library module. Set DURABLE_CONSUMER_VERSION to a
 // pushed revision to verify normal module resolution without a local replacement.
-func (a *app) consumer(ctx context.Context, databaseURL string) error {
+func (a *app) consumer(ctx context.Context, databaseURL string) (result error) {
 	dir, err := os.MkdirTemp("", "durable-consumer-")
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(dir)
-	fixture, err := os.ReadFile(filepath.Join(a.root, "testdata", "consumer", "main.go"))
+	defer func() { result = errors.Join(result, os.RemoveAll(dir)) }()
+	source := filepath.Join(a.root, "cmd", "example")
+	files, err := os.ReadDir(source)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "main.go"), fixture, 0o600); err != nil {
-		return err
+	for _, file := range files {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".go") || strings.HasSuffix(file.Name(), "_test.go") {
+			continue
+		}
+		fixture, err := os.ReadFile(filepath.Join(source, file.Name()))
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, file.Name()), fixture, 0o600); err != nil {
+			return err
+		}
 	}
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/consumer\n\ngo 1.24.0\n"), 0o600); err != nil {
 		return err
@@ -43,5 +55,5 @@ func (a *app) consumer(ctx context.Context, databaseURL string) error {
 	if err := run("get", "github.com/KleitonBarone/durable-task-runner@"+version); err != nil {
 		return fmt.Errorf("install consumer dependency: %w", err)
 	}
-	return run("run", ".")
+	return run("run", ".", "-role", "verify")
 }
