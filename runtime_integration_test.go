@@ -10,8 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	durable "github.com/kleiton/durable-task-runner"
-	"github.com/kleiton/durable-task-runner/internal/testdb"
+	durable "github.com/KleitonBarone/durable-task-runner"
+	"github.com/KleitonBarone/durable-task-runner/internal/testdb"
 )
 
 type observedClock struct {
@@ -194,15 +194,66 @@ func TestWorkerRunProcessesWorkAndStopsOnContextCancellation(t *testing.T) {
 	}
 }
 
-func TestWorkerRunRecordsHandlerFailureBeforeReturning(t *testing.T) {
+func TestWorkerRunContinuesAfterRecordedHandlerFailure(t *testing.T) {
 	engine, _, execution, _ := loopEngine(t)
 	wantErr := errors.New("fake handler failed")
-	worker := loopWorker(t, engine, func(context.Context, string) (string, error) { return "", wantErr })
-	if err := worker.Run(t.Context()); !errors.Is(err, wantErr) {
-		t.Fatalf("handler error = %v", err)
+	definition := durable.Define[string]("loop", nil)
+	second, err := durable.Start(t.Context(), engine, definition, "success")
+	if err != nil {
+		t.Fatal(err)
 	}
-	state, err := engine.Workflow(t.Context(), execution.ID)
-	if err != nil || state.State != durable.WorkflowFailed {
-		t.Fatalf("workflow = %#v, err = %v", state, err)
+	worker := loopWorker(t, engine, func(_ context.Context, input string) (string, error) {
+		if input == "input" {
+			return "", wantErr
+		}
+		return input, nil
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(ctx) }()
+	await(t, func() bool {
+		first, err1 := engine.Workflow(t.Context(), execution.ID)
+		last, err2 := engine.Workflow(t.Context(), second.ID)
+		return err1 == nil && err2 == nil && first.State == durable.WorkflowFailed && last.State == durable.WorkflowCompleted && worker.Health().Healthy
+	})
+	if health := worker.Health(); !health.Running || health.LastError != nil {
+		t.Fatalf("task failure poisoned health: %#v", health)
+	}
+	cancel()
+	if err := receive(t, done); !errors.Is(err, context.Canceled) {
+		t.Fatalf("shutdown: %v", err)
+	}
+}
+
+func TestUnresponsiveHandlerCannotOverlapAnotherInvocation(t *testing.T) {
+	engine, clock, _, _ := loopEngine(t)
+	started, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	defer func() { close(release); receive(t, finished) }()
+	worker := loopWorker(t, engine, func(context.Context, string) (string, error) {
+		close(started)
+		defer close(finished)
+		<-release
+		return "late", nil
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := worker.RunOnce(ctx); done <- err }()
+	receive(t, started)
+	receive(t, clock.created)
+	if _, err := worker.RunOnce(t.Context()); !errors.Is(err, durable.ErrWorkerBusy) {
+		t.Fatalf("concurrent invocation: %v", err)
+	}
+	cancel()
+	if interval := receive(t, clock.created); interval != 5*time.Second {
+		t.Fatalf("shutdown grace = %s", interval)
+	}
+	clock.Advance(5 * time.Second)
+	if err := receive(t, done); !errors.Is(err, durable.ErrHandlerUnresponsive) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if _, err := worker.RunOnce(t.Context()); !errors.Is(err, durable.ErrHandlerUnresponsive) {
+		t.Fatalf("overlapping handler permitted: %v", err)
 	}
 }

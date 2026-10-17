@@ -3,11 +3,37 @@ package durable
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 )
 
 type registryInput struct {
 	Value string `json:"value"`
+}
+
+func TestRegistryDoesNotMutateReusablePlan(t *testing.T) {
+	shared := []ActivitySpec{{Name: "echo", Input: json.RawMessage(`"input"`)}}
+	registry := NewRegistry()
+	definition := Define("reusable", func(string) ([]ActivitySpec, error) { return shared, nil })
+	if err := Register(registry, definition); err != nil {
+		t.Fatal(err)
+	}
+	registered, _ := registry.lookup(definition.Name)
+	var group sync.WaitGroup
+	for range 20 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			_, plan, err := registered.encodePlan("input")
+			if err != nil || len(plan) != 1 || plan[0].Key != "step-0" {
+				t.Errorf("plan: %#v %v", plan, err)
+			}
+		}()
+	}
+	group.Wait()
+	if shared[0].Key != "" {
+		t.Fatalf("registry mutated the application's reusable plan: key = %q", shared[0].Key)
+	}
 }
 
 func TestRegistryEncodesTypedInputAndPlan(t *testing.T) {
@@ -66,5 +92,32 @@ func TestHandlerKeepsTypedBoundary(t *testing.T) {
 	}
 	if _, err := registration.Handler(context.Background(), json.RawMessage(`{"value":`)); err == nil {
 		t.Fatal("invalid handler input was accepted")
+	}
+}
+
+func TestTypedActivityAndStepValidation(t *testing.T) {
+	a := DefineActivity[string, int]("length")
+	spec, err := a.Step("first", "hello")
+	if err != nil || spec.Key != "first" || spec.contract != a.Handle(func(context.Context, string) (int, error) { return 5, nil }).contract {
+		t.Fatalf("typed step = %#v, err = %v", spec, err)
+	}
+	if _, err := a.Step("", "hello"); err == nil {
+		t.Fatal("empty key accepted")
+	}
+	r := NewRegistry()
+	definition := Define("duplicate", func(string) ([]ActivitySpec, error) { return []ActivitySpec{spec, spec}, nil })
+	if err := Register(r, definition); err != nil {
+		t.Fatal(err)
+	}
+	registered, _ := r.lookup(definition.Name)
+	if _, _, err := registered.encodePlan(""); err == nil {
+		t.Fatal("duplicate keys accepted")
+	}
+	if err := r.bindActivities(map[string]string{spec.Name: spec.contract}); err != nil {
+		t.Fatal(err)
+	}
+	b := DefineActivity[int, int]("length")
+	if err := r.bindActivities(map[string]string{"length": b.contract()}); err == nil {
+		t.Fatal("conflicting types accepted")
 	}
 }

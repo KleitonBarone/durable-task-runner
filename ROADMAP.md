@@ -1,7 +1,7 @@
 # Roadmap to v1
 
 This is the implementation plan for the first complete release. Milestones 0 and
-1 and the milestone 1A verification loop are implemented. Milestone 1B is next.
+1, the milestone 1A verification loop, and milestone 1B are implemented. Milestone 2A is next.
 Every unchecked item below is planned work.
 
 See the [delivery plan](docs/delivery-plan.md) for ordered commits, branches,
@@ -70,14 +70,14 @@ process crashes, scheduler restart, graceful shutdown, and controlled loop tests
 
 | Area | Evidence in the repository | Work required before v1 |
 | --- | --- | --- |
-| Installation | `go.mod` declares `github.com/kleiton/durable-task-runner`; Git origin is `github.com/KleitonBarone/durable-task-runner` | Choose the canonical module path and test installation from another module |
+| Installation | Canonical module is `github.com/KleitonBarone/durable-task-runner`, verified from a separate module | Implemented in 1B; candidate-tag verification remains in milestone 4 |
 | Local loop | `cmd/dev` runs from PowerShell or POSIX shells and selects Docker through WSL when needed | Implemented in 1A; keep CI and local commands aligned |
 | Database checks | Explicit integration runs require a reachable database; `check` provisions its own | Implemented in 1A; preserve failure on missing dependencies |
 | Test control | `ManualClock` controls timestamps and runtime tickers | Implemented in 1A; extend deterministic coverage with new transitions |
 | Process recovery | Separate worker/scheduler processes cover crashes before/after effects, shutdown, restart, and stale tokens | Implemented in 1A; extend the harness for retries, cancellation, and cleanup |
-| Worker behavior | Claims do not filter by registered handlers; `Worker.Run` returns on any handler error | Capability-aware claims and separate task outcomes from worker failures |
-| Failure acknowledgement | Completion/failure share a function that uses empty error text to mean success | Represent outcomes explicitly; an error with an empty message must still fail |
-| Integration | Activity names and inputs are connected by strings; outputs are stored but not passed to later steps | Typed step registration, stable step identity, result access, and complete consumer examples |
+| Worker behavior | Workers filter by name/type contract, continue after task failures, and bound reconnect/shutdown | Implemented in 1B; persisted retry/deadline policies remain in 2A |
+| Failure acknowledgement | Explicit error presence controls failure, including empty messages and handler panics | Implemented in 1B; preserve this distinction in later terminal outcomes |
+| Integration | Typed activities, stable step/effect keys, keyed starts, prior/final results, and external consumer | Implemented in 1B; tagged-module qualification remains in milestone 4 |
 | Evolution | Plans are persisted, but workflow and handler versions are absent | Durable version identity and deployment compatibility rules |
 | Operations | Queries fetch one execution and unbounded activity/history lists | Bounded inspection, attempt details, diagnostics, and retention controls |
 
@@ -90,7 +90,7 @@ state-machine changes into one rewrite.
 | Order | Milestone | Result |
 | --- | --- | --- |
 | 1 | 1A. Development and verification, complete | Reproducible checks, deterministic loop tests, process crash test |
-| 2 | 1B. Integration contract | Installable module, typed activities, usable results, resilient worker loop |
+| 2 | 1B. Integration contract, complete | Installable module, typed activities, usable results, resilient worker loop |
 | 3 | 2A. Retry and timeout control | Persisted policies, due times, finite attempt budgets, bounded ownership |
 | 4 | 2B. Cancellation | Transactional cancellation with defined races and cooperative handler shutdown |
 | 5 | 2C. Compensation | Durable reverse-order cleanup and visible cleanup failures |
@@ -182,54 +182,58 @@ process harness and crash recovery; CI parity and contributor instructions.
 
 ## 1B. Make the engine straightforward to integrate
 
+This gate is complete. The example runs both as a local demo and as a standalone
+consumer with separate application, worker, and scheduler processes. Remote
+installation is verified against pushed commits without local replacements;
+candidate-tag verification remains part of milestone 4.
+
 ### Deliverables
 
-- [ ] Correct module/import paths to the canonical repository location. Build a
+- [x] Correct module/import paths to the canonical repository location. Build a
   separate consumer module locally, then verify the pushed commit through normal
-  module resolution. Verify a candidate tag during release qualification. Advertise
-  installation only when it works without `replace`.
-- [ ] Define a typed activity registration tying a stable name to input and output
+  module resolution. Advertise installation only when it works without `replace`.
+- [x] Define a typed activity registration tying a stable name to input and output
   types. Use the same definition in plans and handlers. Validate duplicate step keys,
   malformed payloads, and incompatible registrations before execution where possible.
-- [ ] Give each planned step a stable key distinct from its activity type. Persist
+- [x] Give each planned step a stable key distinct from its activity type. Persist
   result identity. Add typed access to completed earlier-step output from handlers;
   reject reads of future/incomplete steps. Keep plans linear and precomputed, with
   no replay of arbitrary Go workflow code and no expression language.
-- [ ] Expose workflow status, final output, individual attempts, and stable errors
+- [x] Expose workflow status, final output, individual attempts, and stable errors
   such as not-found and lease-lost. Define output/payload limits, JSON encoding,
   and invalid-input behavior. Use the last forward step's output as the successful
   workflow result. Preserve causes for `errors.Is` and `errors.As`.
-- [ ] Add an optional caller-provided workflow start key. A unique constraint makes
+- [x] Add an optional caller-provided workflow start key. A unique constraint makes
   concurrent starts with one key return the same execution; conflicting inputs
   produce an error. Document scope, retention, and ambiguous commit outcomes. A
   completed execution does not restart under its original key.
-- [ ] Supply handler metadata including execution ID, step key, attempt number, and
+- [x] Supply handler metadata including execution ID, step key, attempt number, and
   a stable effect key. The effect key stays the same across deliveries and retries
   of one logical step. Attempt numbers and lease tokens change.
-- [ ] Filter claims by supported activity identities. Missing handlers leave work
+- [x] Filter claims by supported activity identities. Missing handlers leave work
   pending with a diagnostic rather than fail it after claiming.
-- [ ] Separate recorded task failures from fatal runtime/configuration failures.
+- [x] Separate recorded task failures from fatal runtime/configuration failures.
   One failed workflow must not stop a healthy worker processing other workflows.
   Classify transient database errors, bound reconnect backoff, report health, and
   define shutdown and lease-loss behavior. Start with one active handler per worker
   instance; use more instances/processes for concurrency.
-- [ ] Represent success and failure independently of error text. An error with an
+- [x] Represent success and failure independently of error text. An error with an
   empty message must still fail the attempt. Define handler-panic behavior explicitly
   and verify that its attempt is either durably failed or recovered after process exit.
-- [ ] Provide validated defaults and document pool ownership, migration invocation,
+- [x] Provide validated defaults and document pool ownership, migration invocation,
   startup order, signal handling, and shutdown. Cancel handler contexts on lost
   ownership; this cannot forcibly stop a handler that ignores its context.
-- [ ] Add a complete integration example with application, worker, and scheduler
+- [x] Add a complete integration example with application, worker, and scheduler
   entry points, plus a deduplicated fake-effect example. Use only public APIs.
 
 ### Exit gate
 
-- [ ] A standalone consumer starts a job, uses an earlier result in its next step,
+- [x] A standalone consumer starts a job, uses an earlier result in its next step,
   runs separate workers/scheduler, and reads the final result without internal SQL.
-- [ ] Duplicate starts, bad payloads, missing handlers, duplicate effect delivery,
+- [x] Duplicate starts, bad payloads, missing handlers, duplicate effect delivery,
   empty-message errors, handler panics, and a failing job beside a successful one
   have focused tests.
-- [ ] The README routes readers to a runnable example. The integration guide explains
+- [x] The README routes readers to a runnable example. The integration guide explains
   application responsibilities without requiring agent instructions.
 
 Suggested PRs: module identity and consumer fixture; typed steps and results;
@@ -458,5 +462,5 @@ state-machine ADR, SQL constraints, tests, and user docs together when semantics
 change. Introduce verification before the feature it must verify, then extend it
 at each milestone.
 
-The next action is milestone 1B after review and merge of the development-loop PR.
+The next action is milestone 2A after review and merge of the integration PR.
 Milestone 2 and later execution features remain unimplemented.

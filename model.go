@@ -43,7 +43,9 @@ const (
 type WorkflowExecution struct {
 	ID             string
 	DefinitionName string
+	StartKey       *string
 	Input          json.RawMessage
+	Output         json.RawMessage
 	State          WorkflowState
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -54,6 +56,7 @@ type Activity struct {
 	ID           string
 	WorkflowID   string
 	Position     int
+	StepKey      string
 	Name         string
 	Input        json.RawMessage
 	Output       json.RawMessage
@@ -92,6 +95,8 @@ type Claim struct {
 	WorkflowID     string
 	ActivityID     string
 	ActivityName   string
+	StepKey        string
+	Position       int
 	ActivityInput  json.RawMessage
 	AttemptID      string
 	AttemptNumber  int

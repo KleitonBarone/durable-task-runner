@@ -32,7 +32,14 @@ func New(pool *pgxpool.Pool, registry *Registry, clock Clock) (*Engine, error) {
 }
 
 func Open(ctx context.Context, databaseURL string, registry *Registry, clock Clock) (*Engine, error) {
-	pool, err := pgxpool.New(ctx, databaseURL)
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("configure PostgreSQL: %w", err)
+	}
+	if config.ConnConfig.ConnectTimeout == 0 {
+		config.ConnConfig.ConnectTimeout = 5 * time.Second
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("open PostgreSQL: %w", err)
 	}
@@ -59,13 +66,27 @@ func (e *Engine) Migrate(ctx context.Context) error {
 	return Migrate(ctx, e.pool)
 }
 
-func (e *Engine) start(ctx context.Context, definitionName string, input any) (WorkflowExecution, error) {
+func (e *Engine) start(ctx context.Context, definitionName string, input any, options ...StartOption) (WorkflowExecution, error) {
+	key, err := startKey(options)
+	if err != nil {
+		return WorkflowExecution{}, err
+	}
 	definition, ok := e.registry.lookup(definitionName)
 	if !ok {
 		return WorkflowExecution{}, fmt.Errorf("%w: %q", ErrUnknownWorkflow, definitionName)
 	}
 	encodedInput, activitySpecs, err := definition.encodePlan(input)
 	if err != nil {
+		return WorkflowExecution{}, err
+	}
+	contracts := make(map[string]string)
+	for _, spec := range activitySpecs {
+		if previous, ok := contracts[spec.Name]; ok && previous != spec.contract {
+			return WorkflowExecution{}, fmt.Errorf("activity %q has incompatible types in plan", spec.Name)
+		}
+		contracts[spec.Name] = spec.contract
+	}
+	if err := e.registry.bindActivities(contracts); err != nil {
 		return WorkflowExecution{}, err
 	}
 
@@ -84,6 +105,7 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any) (W
 	execution := WorkflowExecution{
 		ID:             workflowID,
 		DefinitionName: definitionName,
+		StartKey:       key,
 		Input:          encodedInput,
 		State:          WorkflowRunning,
 		CreatedAt:      now,
@@ -96,12 +118,27 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any) (W
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	_, err = tx.Exec(ctx, `
-		INSERT INTO workflow_executions (id, definition_name, input, state, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $5)`,
-		workflowID, definitionName, encodedInput, WorkflowRunning, now)
+	inserted, err := tx.Exec(ctx, `
+		INSERT INTO workflow_executions (id, definition_name, input, state, created_at, updated_at, start_key)
+		VALUES ($1, $2, $3, $4, $5, $5, $6)
+		ON CONFLICT (definition_name, start_key) DO NOTHING`,
+		workflowID, definitionName, encodedInput, WorkflowRunning, now, key)
 	if err != nil {
-		return WorkflowExecution{}, fmt.Errorf("persist workflow: %w", err)
+		return WorkflowExecution{}, fmt.Errorf("persist workflow: %w", payloadDatabaseError(err))
+	}
+	if inserted.RowsAffected() == 0 {
+		var existingID string
+		var matches bool
+		if err := tx.QueryRow(ctx, `SELECT id, input = $3::jsonb FROM workflow_executions WHERE definition_name = $1 AND start_key = $2`, definitionName, key, encodedInput).Scan(&existingID, &matches); err != nil {
+			return WorkflowExecution{}, fmt.Errorf("resolve start key: %w", err)
+		}
+		if !matches {
+			return WorkflowExecution{}, ErrStartConflict
+		}
+		if err := tx.Rollback(ctx); err != nil {
+			return WorkflowExecution{}, fmt.Errorf("finish duplicate start: %w", err)
+		}
+		return e.Workflow(ctx, existingID)
 	}
 	if err := appendHistory(ctx, tx, workflowID, nil, nil, "workflow.started", map[string]any{
 		"definition": definitionName,
@@ -115,14 +152,14 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any) (W
 			state = ActivityReady
 		}
 		_, err := tx.Exec(ctx, `
-			INSERT INTO activities (id, workflow_id, position, name, input, state, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
-			activityIDs[i], workflowID, i, spec.Name, spec.Input, state, now)
+			INSERT INTO activities (id, workflow_id, position, name, input, state, created_at, updated_at, step_key, contract)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9)`,
+			activityIDs[i], workflowID, i, spec.Name, spec.Input, state, now, spec.Key, spec.contract)
 		if err != nil {
-			return WorkflowExecution{}, fmt.Errorf("persist activity %d: %w", i, err)
+			return WorkflowExecution{}, fmt.Errorf("persist activity %d: %w", i, payloadDatabaseError(err))
 		}
 		if err := appendHistory(ctx, tx, workflowID, &activityIDs[i], nil, "activity.scheduled", map[string]any{
-			"name": spec.Name, "position": i, "state": state,
+			"name": spec.Name, "position": i, "state": state, "step_key": spec.Key,
 		}, now); err != nil {
 			return WorkflowExecution{}, err
 		}
@@ -134,6 +171,10 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any) (W
 }
 
 func (e *Engine) ClaimActivity(ctx context.Context, workerID string, leaseDuration time.Duration) (Claim, error) {
+	return e.claimActivity(ctx, workerID, leaseDuration, nil)
+}
+
+func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDuration time.Duration, capabilities map[string]string) (Claim, error) {
 	if workerID == "" {
 		return Claim{}, fmt.Errorf("worker id is required")
 	}
@@ -150,16 +191,18 @@ func (e *Engine) ClaimActivity(ctx context.Context, workerID string, leaseDurati
 
 	var claim Claim
 	var currentState ActivityState
+	names, contracts := capabilityArrays(capabilities)
 	err = tx.QueryRow(ctx, `
-		SELECT a.id, a.workflow_id, a.name, a.input, a.attempt_count, a.state
+		SELECT a.id, a.workflow_id, a.name, a.input, a.attempt_count, a.state, a.step_key, a.position
 		FROM activities a
 		JOIN workflow_executions w ON w.id = a.workflow_id
 		WHERE a.state = 'ready' AND w.state = 'running'
+		  AND ($1::boolean OR (a.name, a.contract) IN (SELECT * FROM unnest($2::text[], $3::text[])))
 		ORDER BY a.created_at, a.workflow_id, a.position
 		FOR UPDATE OF a SKIP LOCKED
-		LIMIT 1`).Scan(
+		LIMIT 1`, capabilities == nil, names, contracts).Scan(
 		&claim.ActivityID, &claim.WorkflowID, &claim.ActivityName, &claim.ActivityInput,
-		&claim.AttemptNumber, &currentState,
+		&claim.AttemptNumber, &currentState, &claim.StepKey, &claim.Position,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Claim{}, ErrNoActivity
@@ -247,20 +290,20 @@ func (e *Engine) CompleteActivity(ctx context.Context, claim Claim, output json.
 	if len(output) == 0 {
 		output = json.RawMessage("null")
 	}
-	if !json.Valid(output) {
-		return fmt.Errorf("activity output must be valid JSON")
+	if err := validatePayload(output); err != nil {
+		return err
 	}
-	return e.finishActivity(ctx, claim, output, "")
+	return e.finishActivity(ctx, claim, output, nil)
 }
 
 func (e *Engine) FailActivity(ctx context.Context, claim Claim, activityErr error) error {
 	if activityErr == nil {
 		return fmt.Errorf("activity error is required")
 	}
-	return e.finishActivity(ctx, claim, nil, activityErr.Error())
+	return e.finishActivity(ctx, claim, nil, activityErr)
 }
 
-func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.RawMessage, errorText string) error {
+func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.RawMessage, activityErr error) error {
 	now := e.clock.Now().UTC()
 	tx, err := e.pool.Begin(ctx)
 	if err != nil {
@@ -296,7 +339,8 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 		return err
 	}
 
-	if errorText != "" {
+	if activityErr != nil {
+		errorText := failureMessage(activityErr)
 		if err := ValidateActivityTransition(activityState, ActivityFailed); err != nil {
 			return err
 		}
@@ -338,7 +382,7 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 			return fmt.Errorf("complete attempt: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE activities SET state = $2, output = $3, updated_at = $4, completed_at = $4 WHERE id = $1`, claim.ActivityID, ActivityCompleted, output, now); err != nil {
-			return fmt.Errorf("complete activity: %w", err)
+			return fmt.Errorf("complete activity: %w", payloadDatabaseError(err))
 		}
 		if err := appendHistory(ctx, tx, workflowID, &claim.ActivityID, &claim.AttemptID, "activity.completed", map[string]any{"attempt": claim.AttemptNumber}, now); err != nil {
 			return err
@@ -366,8 +410,8 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 			if err := ValidateWorkflowTransition(WorkflowRunning, WorkflowCompleted); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `UPDATE workflow_executions SET state = $2, updated_at = $3, completed_at = $3 WHERE id = $1 AND state = $4`, workflowID, WorkflowCompleted, now, WorkflowRunning); err != nil {
-				return fmt.Errorf("complete workflow: %w", err)
+			if _, err := tx.Exec(ctx, `UPDATE workflow_executions SET state = $2, updated_at = $3, completed_at = $3, output = $5 WHERE id = $1 AND state = $4`, workflowID, WorkflowCompleted, now, WorkflowRunning, output); err != nil {
+				return fmt.Errorf("complete workflow: %w", payloadDatabaseError(err))
 			}
 			if err := appendHistory(ctx, tx, workflowID, nil, nil, "workflow.completed", map[string]any{}, now); err != nil {
 				return err

@@ -4,7 +4,7 @@
 
 Durable Task Runner explores how multi-step jobs survive retries, cancellation, and worker failure. Correct state transitions matter more than feature count.
 
-Read `README.md` and `ROADMAP.md` before changing scope. Milestones 0 and 1 and the milestone 1A verification loop are implemented. Milestone 1B is next. Never describe milestone 2 or later work as implemented.
+Read `README.md` and `ROADMAP.md` before changing scope. Milestones 0, 1, 1A, and 1B are implemented. Milestone 2A is next after the integration PR merges. Never describe milestone 2 or later work as implemented.
 
 ## Product rules
 
@@ -15,6 +15,8 @@ Read `README.md` and `ROADMAP.md` before changing scope. Milestones 0 and 1 and 
 - Cancellation is a state transition, not a process kill. Define what happens to in-flight activities.
 - Compensation is explicit workflow behavior. Do not pretend rollback is automatic.
 - Workflow version changes must not corrupt executions already in progress.
+- Keep stable step keys and effect keys independent of attempts and lease tokens. Built-in workers claim only compatible activity names and type contracts.
+- A recorded task failure must not stop a healthy worker. Preserve bounded reconnect and shutdown behavior, including one active handler per worker instance.
 
 ## Keep the execution model understandable
 
@@ -32,7 +34,7 @@ go run ./cmd/dev check
 go run ./cmd/dev race
 ```
 
-`check` starts isolated PostgreSQL, checks formatting and static analysis, runs unit/integration/process tests and the example, and cleans up its own containers. It does not need `up` and does not use the development database. Run `race` for runtime/concurrency changes. Make targets call these same commands.
+`check` starts isolated PostgreSQL, checks formatting and static analysis, runs unit/integration/process tests and the example, verifies a separate consumer module with worker/scheduler processes, and cleans up its own containers. It does not need `up` and does not use the development database. Run `race` for runtime/concurrency changes. Make targets call these same commands.
 
 Use `go run ./cmd/dev test -run TestName .` for focused unit work. Explicit `integration` runs require `DURABLE_TEST_DATABASE_URL` pointing to a disposable database and fail when it is missing. See `CONTRIBUTING.md` for direct Go commands, WSL behavior, diagnostics, and targeted repetitions.
 

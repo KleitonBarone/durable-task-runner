@@ -1,6 +1,6 @@
 # Development
 
-Milestones 0 and 1 and the milestone 1A verification loop are implemented.
+Milestones 0, 1, 1A, and 1B are implemented.
 [ROADMAP.md](ROADMAP.md) defines the remaining behavior and its acceptance gates.
 
 ## Start with one command
@@ -13,7 +13,8 @@ go run ./cmd/dev check
 
 This checks formatting, runs static analysis for unit/integration/process code,
 runs uncached unit and PostgreSQL tests, exercises real process recovery, and runs
-the example. It provisions its own PostgreSQL 17 container with an available
+the example and a standalone consumer with separate worker/scheduler processes.
+It provisions its own PostgreSQL 17 container with an available
 loopback port and temporary data, then removes that container on success or failure.
 It does not use the named development database or a configured application URL.
 
@@ -53,7 +54,8 @@ go run ./cmd/dev down
 
 `up` uses `compose.yaml` and the named `durable-task-runner` project on
 `127.0.0.1:54329`. `down` preserves its named volume. The example prints nine events,
-ending with `workflow.completed`; both activity handlers are local fakes.
+including `workflow.completed`, followed by its typed final result. Both activity
+handlers are local fakes with application-owned effect-key deduplication.
 
 `DATABASE_URL` overrides the example's local default. The full `check` command
 always supplies its own temporary database. Do not reset development volumes as
@@ -95,6 +97,8 @@ processes, synchronizes on persisted barriers, and kills a worker before or afte
 its fake side effect. It verifies abandoned/completed attempts, duplicate delivery,
 stale-token rejection, the next step, scheduler restart, and persistence through a
 new connection. A third scenario checks graceful shutdown during an activity.
+A fourth kills a worker after a deduplicated effect, verifies two deliveries share
+one effect key, and observes one committed effect.
 
 The harness also injects a failed child to verify failure reporting. Subprocesses
 have deadlines and cleanup; their output is attached to a failed test. Precise
@@ -157,6 +161,32 @@ targeted stress gate passed 20 repetitions in 149 seconds,
 including all three process scenarios per repetition. These are observed timings,
 not performance guarantees. Docker image and Go module downloads add to first-run
 time. CI provides independent clean-run timing for both supported Go versions.
+
+After milestone 1B, the same Windows full check took 39.2 seconds, including the
+additional deduplication crash case and standalone consumer processes.
+
+## Verify integration from another module
+
+```sh
+go run ./cmd/dev consumer
+```
+
+This copies the example's Go source into a temporary consumer module, installs the
+library, starts separate worker and scheduler processes, and checks keyed starts,
+prior-step results, final output, attempts, and fake effects. Its SQL reads only
+application-owned effects; all engine inspection uses public APIs. Local checks
+replace the dependency with the checkout. To install a pushed commit with normal
+module resolution and a fresh module cache, use PowerShell:
+
+```powershell
+$env:DURABLE_CONSUMER_VERSION = (git rev-parse HEAD)
+go run ./cmd/dev consumer
+Remove-Item Env:DURABLE_CONSUMER_VERSION
+```
+
+In a POSIX shell use
+`DURABLE_CONSUMER_VERSION=$(git rev-parse HEAD) go run ./cmd/dev consumer`.
+Push the commit first. No release tag is implied by this check.
 
 ## Changing behavior
 

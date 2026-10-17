@@ -1,4 +1,4 @@
-module github.com/kleiton/durable-task-runner
+module github.com/KleitonBarone/durable-task-runner
 
 go 1.24.0
 
