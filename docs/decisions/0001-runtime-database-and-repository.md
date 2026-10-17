@@ -2,6 +2,10 @@
 
 Status: accepted, 2026-08-27
 
+The minimum Go version is superseded by
+[ADR 0008](0008-supported-runtime-and-security-checks.md). Other decisions here
+remain in effect.
+
 ## Context
 
 The first two milestones need to prove durable claiming and crash recovery without hiding the state model behind infrastructure. The repository had no runtime or database choice.

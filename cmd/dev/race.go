@@ -56,7 +56,7 @@ func (a *app) race(ctx context.Context, args []string) error {
 			"--mount", "type=bind,src=" + db.docker.root + ",dst=/workspace,readonly", "--workdir", "/workspace",
 			"--mount", "type=bind,src=" + cache + ",dst=/go/pkg/mod,readonly",
 			"--env", "DURABLE_TEST_DATABASE_URL=postgres://durable:durable@localhost:5432/durable?sslmode=disable",
-			"--env", "CGO_ENABLED=1", "--env", "GOPROXY=off", "golang:1.24-bookworm", "go"}
+			"--env", "CGO_ENABLED=1", "--env", "GOPROXY=off", "golang:1.26.9-bookworm", "go"}
 		_, err = a.runner.run(ctx, db.docker.command(a.root, append(commandArgs, arguments...)...))
 		return err
 	})

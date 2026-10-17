@@ -34,7 +34,7 @@ func (a *app) consumer(ctx context.Context, databaseURL string) (result error) {
 			return err
 		}
 	}
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/consumer\n\ngo 1.24.0\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/consumer\n\ngo 1.26.9\n"), 0o600); err != nil {
 		return err
 	}
 	version := a.getenv("DURABLE_CONSUMER_VERSION")

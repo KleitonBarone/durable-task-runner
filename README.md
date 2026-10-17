@@ -14,7 +14,7 @@ Operator tooling and release qualification remain. See the [roadmap to v1](ROADM
 
 ## Try it
 
-You need Go 1.24 or later and Docker with Compose. PostgreSQL 17 runs locally
+You need Go 1.26.9 or later and Docker with Compose. PostgreSQL 17 runs locally
 through Compose.
 
 ```sh

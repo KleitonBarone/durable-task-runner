@@ -23,7 +23,7 @@ Read `README.md` and `ROADMAP.md` before changing scope. Milestones through 3A a
 
 Start with one scheduler, worker processes, and one durable database. Do not add a broker, distributed lock service, or workflow DSL until the existing model cannot express a required behavior.
 
-The runtime is Go 1.24 or later with PostgreSQL 17 and `pgx`. Keep the single-module shape described in `docs/decisions/0001-runtime-database-and-repository.md`. Prefer types that make invalid workflow and activity states difficult to represent.
+The runtime is Go 1.26.9 or later with PostgreSQL 17 and `pgx`. ADR 0008 supersedes ADR 0001's Go minimum after dependency/security verification. Keep the single-module shape described in `docs/decisions/0001-runtime-database-and-repository.md`. Prefer types that make invalid workflow and activity states difficult to represent.
 
 ## Verification
 
@@ -33,6 +33,7 @@ Run the relevant checks before handing off changes:
 go run ./cmd/dev fmt
 go run ./cmd/dev check
 go run ./cmd/dev race
+go run ./cmd/dev vuln
 ```
 
 `check` starts isolated PostgreSQL, checks formatting and static analysis, runs unit/integration/process tests and the example, verifies a separate consumer module with worker/scheduler recovery, restores a snapshot into a second isolated database, and cleans up its own containers. It does not need `up` and does not use the development database. Run `race` for runtime/concurrency changes. Make targets call these same commands.
