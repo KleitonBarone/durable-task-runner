@@ -8,15 +8,43 @@ import (
 type WorkflowState string
 
 const (
-	WorkflowRunning         WorkflowState = "running"
-	WorkflowCompleted       WorkflowState = "completed"
-	WorkflowFailed          WorkflowState = "failed"
-	WorkflowTimedOut        WorkflowState = "timed_out"
-	WorkflowCancelRequested WorkflowState = "cancel_requested"
-	WorkflowCancelled       WorkflowState = "cancelled"
+	WorkflowRunning            WorkflowState = "running"
+	WorkflowCompleted          WorkflowState = "completed"
+	WorkflowFailed             WorkflowState = "failed"
+	WorkflowTimedOut           WorkflowState = "timed_out"
+	WorkflowCancelRequested    WorkflowState = "cancel_requested"
+	WorkflowCancelled          WorkflowState = "cancelled"
+	WorkflowCompensating       WorkflowState = "compensating"
+	WorkflowCompensationFailed WorkflowState = "compensation_failed"
 )
 
 type ActivityState string
+
+type ActivityKind string
+
+const (
+	ActivityForward      ActivityKind = "forward"
+	ActivityCompensation ActivityKind = "compensation"
+)
+
+type CompensationState string
+
+const (
+	CompensationNone      CompensationState = "none"
+	CompensationRunning   CompensationState = "running"
+	CompensationCompleted CompensationState = "completed"
+	CompensationFailed    CompensationState = "failed"
+)
+
+// CompensationPlan is the immutable cleanup declaration stored on a forward
+// activity. Cleanup handlers can also read committed forward step results.
+type CompensationPlan struct {
+	Name           string          `json:"name"`
+	Contract       string          `json:"contract"`
+	Input          json.RawMessage `json:"input"`
+	RetryPolicy    RetryPolicy     `json:"retry_policy"`
+	AttemptTimeout time.Duration   `json:"attempt_timeout_ns"`
+}
 
 const (
 	ActivityBlocked   ActivityState = "blocked"
@@ -49,43 +77,51 @@ const (
 )
 
 type WorkflowExecution struct {
-	ID                  string
-	DefinitionName      string
-	StartKey            *string
-	Input               json.RawMessage
-	Output              json.RawMessage
-	State               WorkflowState
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
-	CompletedAt         *time.Time
-	TerminalReason      string
-	LastError           string
-	DeadlineAt          time.Time
-	Timeout             time.Duration
-	PreviousExecutionID *string
-	CancelActor         string
-	CancelReason        string
-	CancelRequestedAt   *time.Time
-	CancelSettledAt     *time.Time
+	ID                     string
+	DefinitionName         string
+	StartKey               *string
+	Input                  json.RawMessage
+	Output                 json.RawMessage
+	State                  WorkflowState
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	CompletedAt            *time.Time
+	TerminalReason         string
+	LastError              string
+	DeadlineAt             time.Time
+	Timeout                time.Duration
+	PreviousExecutionID    *string
+	CancelActor            string
+	CancelReason           string
+	CancelRequestedAt      *time.Time
+	CancelSettledAt        *time.Time
+	OriginalState          WorkflowState
+	CompensationState      CompensationState
+	CompensationError      string
+	CompensationTimeout    time.Duration
+	CompensationDeadlineAt *time.Time
 }
 
 type Activity struct {
-	ID             string
-	WorkflowID     string
-	Position       int
-	StepKey        string
-	Name           string
-	Input          json.RawMessage
-	Output         json.RawMessage
-	State          ActivityState
-	AttemptCount   int
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	CompletedAt    *time.Time
-	RetryPolicy    RetryPolicy
-	AvailableAt    time.Time
-	AttemptTimeout time.Duration
-	LastError      string
+	Kind                  ActivityKind
+	CompensatesActivityID *string
+	Compensation          *CompensationPlan
+	ID                    string
+	WorkflowID            string
+	Position              int
+	StepKey               string
+	Name                  string
+	Input                 json.RawMessage
+	Output                json.RawMessage
+	State                 ActivityState
+	AttemptCount          int
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+	CompletedAt           *time.Time
+	RetryPolicy           RetryPolicy
+	AvailableAt           time.Time
+	AttemptTimeout        time.Duration
+	LastError             string
 }
 
 type Attempt struct {
@@ -116,20 +152,22 @@ type Lease struct {
 }
 
 type Claim struct {
-	WorkflowID      string
-	ActivityID      string
-	ActivityName    string
-	StepKey         string
-	Position        int
-	ActivityInput   json.RawMessage
-	AttemptID       string
-	AttemptNumber   int
-	LeaseID         string
-	LeaseToken      string
-	WorkerID        string
-	LeaseExpiresAt  time.Time
-	ClaimedAt       time.Time
-	AttemptDeadline time.Time
+	Kind                  ActivityKind
+	CompensatesActivityID *string
+	WorkflowID            string
+	ActivityID            string
+	ActivityName          string
+	StepKey               string
+	Position              int
+	ActivityInput         json.RawMessage
+	AttemptID             string
+	AttemptNumber         int
+	LeaseID               string
+	LeaseToken            string
+	WorkerID              string
+	LeaseExpiresAt        time.Time
+	ClaimedAt             time.Time
+	AttemptDeadline       time.Time
 }
 
 type TimelineEvent struct {

@@ -13,8 +13,10 @@ up to 16 KiB. Neither may contain NUL. Do not put secrets in these fields.
 The first committed request stops forward claims and fences active leases. It
 records `cancel_requested`, actor, reason, and request time. Pending steps and
 active attempts become `cancelled`; completed results remain available. The
-scheduler settles the workflow as `cancelled` without waiting for any handler.
-If the scheduler is absent, the request stays visible and claims remain fenced.
+scheduler settles the workflow as `cancelled` or starts declared compensation.
+It never waits for a stopped forward handler. Required cleanup must finish or
+fail before cancellation settles. If the scheduler is absent, the request stays
+visible and forward claims remain fenced.
 
 Workers observe cancellation at their next heartbeat/control check and cancel
 the handler context. Handlers should use that context for bounded external calls.

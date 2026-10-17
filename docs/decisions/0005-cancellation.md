@@ -2,6 +2,10 @@
 
 Status: accepted for milestone 2B.
 
+[ADR 0006](0006-compensation.md) extends settlement when completed steps declare
+cleanup. The scheduler then enters `compensating`; cancellation settles after
+required cleanup completes or fails. Requests still fence forward work immediately.
+
 Cancellation is an explicit request, independent of worker process shutdown.
 `Engine.Cancel(ctx, id, actor, reason)` locks the workflow before all child rows,
 using the same order as claims, acknowledgements, and deadline settlement. Actor

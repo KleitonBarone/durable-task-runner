@@ -86,6 +86,12 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any, op
 			return WorkflowExecution{}, fmt.Errorf("activity %q has incompatible types in plan", spec.Name)
 		}
 		contracts[spec.Name] = spec.contract
+		if cleanup := spec.compensation; cleanup != nil {
+			if previous, ok := contracts[cleanup.Name]; ok && previous != cleanup.Contract {
+				return WorkflowExecution{}, fmt.Errorf("cleanup %q has incompatible types in plan", cleanup.Name)
+			}
+			contracts[cleanup.Name] = cleanup.Contract
+		}
 	}
 	if err := e.registry.bindActivities(contracts); err != nil {
 		return WorkflowExecution{}, err
@@ -115,12 +121,14 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any, op
 	execution.Timeout = config.timeout
 	execution.DeadlineAt = now.Add(config.timeout)
 	execution.PreviousExecutionID = config.previous
+	execution.CompensationTimeout = config.compensationTimeout
+	execution.CompensationState = CompensationNone
 
 	inserted, err := tx.Exec(ctx, `
-		INSERT INTO workflow_executions (id, definition_name, input, state, created_at, updated_at, start_key, timeout_ns, deadline_at, previous_execution_id)
-		VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9)
+		INSERT INTO workflow_executions (id, definition_name, input, state, created_at, updated_at, start_key, timeout_ns, deadline_at, previous_execution_id,compensation_timeout_ns)
+		VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9,$10)
 		ON CONFLICT (definition_name, start_key) DO NOTHING`,
-		workflowID, definitionName, encodedInput, WorkflowRunning, now, key, config.timeout, execution.DeadlineAt, config.previous)
+		workflowID, definitionName, encodedInput, WorkflowRunning, now, key, config.timeout, execution.DeadlineAt, config.previous, config.compensationTimeout)
 	if err != nil {
 		return WorkflowExecution{}, fmt.Errorf("persist workflow: %w", payloadDatabaseError(err))
 	}
@@ -161,9 +169,9 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any, op
 			state = ActivityReady
 		}
 		_, err := tx.Exec(ctx, `
-			INSERT INTO activities (id, workflow_id, position, name, input, state, created_at, updated_at, step_key, contract, retry_policy, attempt_timeout_ns, available_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11, $7)`,
-			activityIDs[i], workflowID, i, spec.Name, spec.Input, state, now, spec.Key, spec.contract, spec.policy, spec.attemptTimeout)
+			INSERT INTO activities (id, workflow_id, position, name, input, state, created_at, updated_at, step_key, contract, retry_policy, attempt_timeout_ns, available_at,compensation)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11, $7,$12)`,
+			activityIDs[i], workflowID, i, spec.Name, spec.Input, state, now, spec.Key, spec.contract, spec.policy, spec.attemptTimeout, spec.compensation)
 		if err != nil {
 			return WorkflowExecution{}, fmt.Errorf("persist activity %d: %w", i, payloadDatabaseError(err))
 		}
@@ -202,16 +210,16 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 	var attemptTimeout time.Duration
 	names, contracts := capabilityArrays(capabilities)
 	err = tx.QueryRow(ctx, `
-		SELECT a.id, a.workflow_id, a.name, a.input, a.attempt_count, a.state, a.step_key, a.position
+		SELECT a.id, a.workflow_id, a.name, a.input, a.attempt_count, a.state, a.step_key, a.position,a.kind,a.compensates_id
 		FROM activities a
 		JOIN workflow_executions w ON w.id = a.workflow_id
-		WHERE a.state = 'ready' AND w.state = 'running'
+		WHERE a.state = 'ready' AND ((w.state = 'running' AND a.kind='forward') OR (w.state='compensating' AND a.kind='compensation'))
 		  AND ($1::boolean OR (a.name, a.contract) IN (SELECT * FROM unnest($2::text[], $3::text[])))
 		ORDER BY a.created_at, a.workflow_id, a.position
 		FOR UPDATE OF w SKIP LOCKED
 		LIMIT 1`, capabilities == nil, names, contracts).Scan(
 		&claim.ActivityID, &claim.WorkflowID, &claim.ActivityName, &claim.ActivityInput,
-		&claim.AttemptNumber, &currentState, &claim.StepKey, &claim.Position,
+		&claim.AttemptNumber, &currentState, &claim.StepKey, &claim.Position, &claim.Kind, &claim.CompensatesActivityID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Claim{}, ErrNoActivity
@@ -230,12 +238,18 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 		return Claim{}, err
 	}
 	var workflowDeadline time.Time
-	if err := tx.QueryRow(ctx, `SELECT deadline_at FROM workflow_executions WHERE id=$1`, claim.WorkflowID).Scan(&workflowDeadline); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT CASE WHEN state='compensating' THEN compensation_deadline_at ELSE deadline_at END FROM workflow_executions WHERE id=$1`, claim.WorkflowID).Scan(&workflowDeadline); err != nil {
 		return Claim{}, err
 	}
 	if !workflowDeadline.After(now) {
-		if err := e.timeoutWorkflow(ctx, tx, claim.WorkflowID, "workflow_deadline", now); err != nil {
-			return Claim{}, err
+		var stopErr error
+		if claim.Kind == ActivityCompensation {
+			stopErr = e.failCompensation(ctx, tx, claim.WorkflowID, "compensation_deadline", "compensation_deadline", now)
+		} else {
+			stopErr = e.timeoutWorkflow(ctx, tx, claim.WorkflowID, "workflow_deadline", now)
+		}
+		if stopErr != nil {
+			return Claim{}, stopErr
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return Claim{}, err
@@ -249,8 +263,14 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 		if err := appendHistory(ctx, tx, claim.WorkflowID, &claim.ActivityID, nil, "activity.failed", map[string]any{"reason": "attempt_budget_exhausted"}, now); err != nil {
 			return Claim{}, err
 		}
-		if err := failWorkflow(ctx, tx, claim.WorkflowID, "attempt_budget_exhausted", "claim budget exhausted", now); err != nil {
-			return Claim{}, err
+		var stopErr error
+		if claim.Kind == ActivityCompensation {
+			stopErr = e.failCompensation(ctx, tx, claim.WorkflowID, "attempt_budget_exhausted", "claim budget exhausted", now)
+		} else {
+			stopErr = e.beginCompensation(ctx, tx, claim.WorkflowID, WorkflowFailed, "attempt_budget_exhausted", "claim budget exhausted", now)
+		}
+		if stopErr != nil {
+			return Claim{}, stopErr
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return Claim{}, err
@@ -320,7 +340,7 @@ func (e *Engine) Heartbeat(ctx context.Context, claim Claim, extension time.Dura
 	if err != nil {
 		return time.Time{}, err
 	}
-	if state != WorkflowRunning {
+	if !workingWorkflow(state) {
 		return time.Time{}, ErrLeaseLost
 	}
 	if _, err := tx.Exec(ctx, `SELECT l.id FROM leases l JOIN activities a ON a.id=l.activity_id JOIN attempts at ON at.id=l.attempt_id WHERE l.token=$1 FOR UPDATE OF a, at, l`, claim.LeaseToken); err != nil {
@@ -342,7 +362,7 @@ func (e *Engine) Heartbeat(ctx context.Context, claim Claim, extension time.Dura
 	var expiresAt time.Time
 	err = tx.QueryRow(ctx, `
 		UPDATE leases l
-		SET heartbeat_at = $2, expires_at = LEAST(GREATEST(l.expires_at, $3),at.deadline_at,w.deadline_at)
+		SET heartbeat_at = $2, expires_at = LEAST(GREATEST(l.expires_at, $3),at.deadline_at,CASE WHEN w.state='compensating' THEN w.compensation_deadline_at ELSE w.deadline_at END)
 		FROM activities a, attempts at, workflow_executions w
 		WHERE l.token = $1
 		  AND l.activity_id = a.id
@@ -392,25 +412,26 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 	if err != nil {
 		return err
 	}
-	if workflowState != WorkflowRunning {
+	if !workingWorkflow(workflowState) {
 		return ErrLeaseLost
 	}
 
 	var workflowID string
 	var position int
 	var activityState ActivityState
+	var activityKind ActivityKind
 	var attemptState AttemptState
 	var leaseState LeaseState
 	var expiresAt time.Time
 	var leaseID string
 	err = tx.QueryRow(ctx, `
-		SELECT a.workflow_id, a.position, a.state, at.state, l.state, l.expires_at, l.id
+		SELECT a.workflow_id, a.position, a.state, at.state, l.state, l.expires_at, l.id,a.kind
 		FROM leases l
 		JOIN activities a ON a.id = l.activity_id
 		JOIN attempts at ON at.id = l.attempt_id
 		WHERE l.token = $1 AND l.activity_id = $2 AND l.attempt_id = $3
 		FOR UPDATE OF l, a, at`, claim.LeaseToken, claim.ActivityID, claim.AttemptID).Scan(
-		&workflowID, &position, &activityState, &attemptState, &leaseState, &expiresAt, &leaseID,
+		&workflowID, &position, &activityState, &attemptState, &leaseState, &expiresAt, &leaseID, &activityKind,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrLeaseLost
@@ -465,10 +486,10 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 		var nextActivityID string
 		err := tx.QueryRow(ctx, `
 			SELECT id FROM activities
-			WHERE workflow_id = $1 AND position > $2 AND state = 'blocked'
+			WHERE workflow_id = $1 AND position > $2 AND state = 'blocked' AND kind=$3
 			ORDER BY position
 			LIMIT 1
-			FOR UPDATE`, workflowID, position).Scan(&nextActivityID)
+			FOR UPDATE`, workflowID, position, activityKind).Scan(&nextActivityID)
 		switch {
 		case err == nil:
 			if err := ValidateActivityTransition(ActivityBlocked, ActivityReady); err != nil {
@@ -481,6 +502,12 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 				return err
 			}
 		case errors.Is(err, pgx.ErrNoRows):
+			if workflowState == WorkflowCompensating {
+				if err := completeCompensation(ctx, tx, workflowID, now); err != nil {
+					return err
+				}
+				break
+			}
 			if err := ValidateWorkflowTransition(WorkflowRunning, WorkflowCompleted); err != nil {
 				return err
 			}

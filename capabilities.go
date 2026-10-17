@@ -24,7 +24,7 @@ type UnsupportedActivity struct {
 // cannot claim. It does not classify blocked steps or claim global worker health.
 func (w *Worker) UnsupportedActivities(ctx context.Context) ([]UnsupportedActivity, error) {
 	names, contracts := capabilityArrays(w.capabilities)
-	rows, err := w.engine.pool.Query(ctx, `SELECT a.name, a.contract, count(*) FROM activities a JOIN workflow_executions w ON w.id = a.workflow_id WHERE a.state = 'ready' AND w.state = 'running' AND (a.name, a.contract) NOT IN (SELECT * FROM unnest($1::text[], $2::text[])) GROUP BY a.name, a.contract ORDER BY a.name, a.contract LIMIT 100`, names, contracts)
+	rows, err := w.engine.pool.Query(ctx, `SELECT a.name, a.contract, count(*) FROM activities a JOIN workflow_executions w ON w.id = a.workflow_id WHERE a.state = 'ready' AND ((w.state='running' AND a.kind='forward') OR (w.state='compensating' AND a.kind='compensation')) AND (a.name, a.contract) NOT IN (SELECT * FROM unnest($1::text[], $2::text[])) GROUP BY a.name, a.contract ORDER BY a.name, a.contract LIMIT 100`, names, contracts)
 	if err != nil {
 		return nil, fmt.Errorf("read unsupported activities: %w", err)
 	}

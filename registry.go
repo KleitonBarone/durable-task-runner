@@ -18,6 +18,7 @@ type ActivitySpec struct {
 	contract       string
 	policy         RetryPolicy
 	attemptTimeout time.Duration
+	compensation   *CompensationPlan
 }
 
 func NewActivity[Input any](name string, input Input, options ...StepOption) (ActivitySpec, error) {

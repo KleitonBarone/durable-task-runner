@@ -38,3 +38,23 @@ func TestRetryPolicyValidationAndPermanentCauses(t *testing.T) {
 		t.Fatal("handler panic is retryable")
 	}
 }
+
+func TestCompensationDeclarationValidation(t *testing.T) {
+	cleanup, err := NewActivity("undo", "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	forward, err := NewActivity("effect", "input", WithCompensation(cleanup))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewActivity("outer", "input", WithCompensation(forward)); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("nested cleanup: %v", err)
+	}
+	if _, err := NewActivity("effect", "input", WithCompensation(ActivitySpec{})); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("empty cleanup: %v", err)
+	}
+	if _, err := NewActivity("effect", "input", WithCompensation(cleanup), WithCompensation(cleanup)); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("duplicate cleanup: %v", err)
+	}
+}

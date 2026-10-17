@@ -73,6 +73,13 @@ func run() error {
 		createAccount.Handle(func(ctx context.Context, input accountInput) (accountResult, error) {
 			return fakeEffect(ctx, pool, accountResult{AccountID: input.AccountID})
 		}),
+		deleteAccount.Handle(func(ctx context.Context, _ accountInput) (accountResult, error) {
+			account, err := createAccount.Result(ctx, "account")
+			if err != nil {
+				return accountResult{}, err
+			}
+			return fakeEffect(ctx, pool, account)
+		}),
 		sendEmail.Handle(func(ctx context.Context, input emailInput) (welcomeResult, error) {
 			account, err := createAccount.Result(ctx, "account")
 			if err != nil {

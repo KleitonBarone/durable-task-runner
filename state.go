@@ -4,8 +4,9 @@ import "fmt"
 
 func ValidateWorkflowTransition(from, to WorkflowState) error {
 	allowed := map[WorkflowState]map[WorkflowState]bool{
-		WorkflowRunning:         {WorkflowCompleted: true, WorkflowFailed: true, WorkflowTimedOut: true, WorkflowCancelRequested: true},
-		WorkflowCancelRequested: {WorkflowCancelled: true},
+		WorkflowRunning:         {WorkflowCompleted: true, WorkflowFailed: true, WorkflowTimedOut: true, WorkflowCancelRequested: true, WorkflowCompensating: true},
+		WorkflowCancelRequested: {WorkflowCancelled: true, WorkflowCompensating: true},
+		WorkflowCompensating:    {WorkflowFailed: true, WorkflowTimedOut: true, WorkflowCancelled: true, WorkflowCompensationFailed: true},
 	}
 	if !allowed[from][to] {
 		return fmt.Errorf("invalid workflow transition %q -> %q", from, to)
@@ -34,7 +35,11 @@ func ValidateAttemptTransition(from, to AttemptState) error {
 }
 
 func terminalWorkflow(state WorkflowState) bool {
-	return state == WorkflowCompleted || state == WorkflowFailed || state == WorkflowTimedOut || state == WorkflowCancelled
+	return state == WorkflowCompleted || state == WorkflowFailed || state == WorkflowTimedOut || state == WorkflowCancelled || state == WorkflowCompensationFailed
+}
+
+func workingWorkflow(state WorkflowState) bool {
+	return state == WorkflowRunning || state == WorkflowCompensating
 }
 
 func ValidateLeaseTransition(from, to LeaseState) error {
