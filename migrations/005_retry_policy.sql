@@ -1,0 +1,15 @@
+ALTER TABLE workflow_executions ADD COLUMN terminal_reason text NOT NULL DEFAULT '';
+ALTER TABLE workflow_executions ADD COLUMN last_error text NOT NULL DEFAULT '';
+UPDATE workflow_executions SET terminal_reason='handler_error' WHERE state='failed';
+ALTER TABLE activities ADD COLUMN retry_policy jsonb NOT NULL DEFAULT '{"max_attempts":3,"retry_errors":false,"initial_interval":0,"maximum_interval":60000000000,"jitter_fraction":0}';
+ALTER TABLE activities ADD CONSTRAINT activities_retry_budget CHECK ((retry_policy->>'max_attempts')::integer > 0);
+ALTER TABLE activities ADD COLUMN attempt_timeout_ns bigint NOT NULL DEFAULT 300000000000 CHECK (attempt_timeout_ns > 0);
+ALTER TABLE activities ADD COLUMN available_at timestamptz;
+UPDATE activities SET available_at=created_at;
+ALTER TABLE activities ALTER COLUMN available_at SET NOT NULL;
+ALTER TABLE activities ADD COLUMN last_error text NOT NULL DEFAULT '';
+ALTER TABLE activities DROP CONSTRAINT activities_state_check;
+ALTER TABLE activities ADD CONSTRAINT activities_state_check CHECK (state IN ('blocked','ready','running','retry_wait','completed','failed'));
+CREATE INDEX activities_retry_due_idx ON activities(available_at) WHERE state='retry_wait';
+ALTER TABLE attempts ADD COLUMN retry_decision text NOT NULL DEFAULT '';
+ALTER TABLE attempts ADD COLUMN retry_due_at timestamptz;

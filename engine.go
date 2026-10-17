@@ -146,9 +146,9 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any, op
 			state = ActivityReady
 		}
 		_, err := tx.Exec(ctx, `
-			INSERT INTO activities (id, workflow_id, position, name, input, state, created_at, updated_at, step_key, contract)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9)`,
-			activityIDs[i], workflowID, i, spec.Name, spec.Input, state, now, spec.Key, spec.contract)
+			INSERT INTO activities (id, workflow_id, position, name, input, state, created_at, updated_at, step_key, contract, retry_policy, attempt_timeout_ns, available_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11, $7)`,
+			activityIDs[i], workflowID, i, spec.Name, spec.Input, state, now, spec.Key, spec.contract, spec.policy, spec.attemptTimeout)
 		if err != nil {
 			return WorkflowExecution{}, fmt.Errorf("persist activity %d: %w", i, payloadDatabaseError(err))
 		}
@@ -183,6 +183,7 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 
 	var claim Claim
 	var currentState ActivityState
+	var policy RetryPolicy
 	names, contracts := capabilityArrays(capabilities)
 	err = tx.QueryRow(ctx, `
 		SELECT a.id, a.workflow_id, a.name, a.input, a.attempt_count, a.state, a.step_key, a.position
@@ -202,7 +203,7 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 	if err != nil {
 		return Claim{}, fmt.Errorf("select activity to claim: %w", err)
 	}
-	if err := tx.QueryRow(ctx, `SELECT state, attempt_count FROM activities WHERE id=$1 FOR UPDATE`, claim.ActivityID).Scan(&currentState, &claim.AttemptNumber); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT state, attempt_count, retry_policy FROM activities WHERE id=$1 FOR UPDATE`, claim.ActivityID).Scan(&currentState, &claim.AttemptNumber, &policy); err != nil {
 		return Claim{}, err
 	}
 	if currentState != ActivityReady {
@@ -211,6 +212,21 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 	now, err := e.now(ctx, tx)
 	if err != nil {
 		return Claim{}, err
+	}
+	if claim.AttemptNumber >= policy.MaxAttempts {
+		if _, err := tx.Exec(ctx, `UPDATE activities SET state='failed',updated_at=$2,completed_at=$2,last_error='claim budget exhausted' WHERE id=$1`, claim.ActivityID, now); err != nil {
+			return Claim{}, err
+		}
+		if err := appendHistory(ctx, tx, claim.WorkflowID, &claim.ActivityID, nil, "activity.failed", map[string]any{"reason": "attempt_budget_exhausted"}, now); err != nil {
+			return Claim{}, err
+		}
+		if err := failWorkflow(ctx, tx, claim.WorkflowID, "attempt_budget_exhausted", "claim budget exhausted", now); err != nil {
+			return Claim{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Claim{}, err
+		}
+		return Claim{}, ErrNoActivity
 	}
 	if err := ValidateActivityTransition(currentState, ActivityRunning); err != nil {
 		return Claim{}, err
@@ -346,14 +362,15 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 	var attemptState AttemptState
 	var leaseState LeaseState
 	var expiresAt time.Time
+	var leaseID string
 	err = tx.QueryRow(ctx, `
-		SELECT a.workflow_id, a.position, a.state, at.state, l.state, l.expires_at
+		SELECT a.workflow_id, a.position, a.state, at.state, l.state, l.expires_at, l.id
 		FROM leases l
 		JOIN activities a ON a.id = l.activity_id
 		JOIN attempts at ON at.id = l.attempt_id
 		WHERE l.token = $1 AND l.activity_id = $2 AND l.attempt_id = $3
 		FOR UPDATE OF l, a, at`, claim.LeaseToken, claim.ActivityID, claim.AttemptID).Scan(
-		&workflowID, &position, &activityState, &attemptState, &leaseState, &expiresAt,
+		&workflowID, &position, &activityState, &attemptState, &leaseState, &expiresAt, &leaseID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrLeaseLost
@@ -373,32 +390,8 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 	}
 
 	if activityErr != nil {
-		errorText := failureMessage(activityErr)
-		if err := ValidateActivityTransition(activityState, ActivityFailed); err != nil {
-			return err
-		}
-		if err := ValidateAttemptTransition(attemptState, AttemptFailed); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE leases SET state = $2, ended_at = $3 WHERE token = $1`, claim.LeaseToken, LeaseReleased, now); err != nil {
-			return fmt.Errorf("release failed lease: %w", err)
-		}
-		if _, err := tx.Exec(ctx, `UPDATE attempts SET state = $2, error_text = $3, ended_at = $4 WHERE id = $1`, claim.AttemptID, AttemptFailed, errorText, now); err != nil {
-			return fmt.Errorf("fail attempt: %w", err)
-		}
-		if _, err := tx.Exec(ctx, `UPDATE activities SET state = $2, updated_at = $3, completed_at = $3 WHERE id = $1`, claim.ActivityID, ActivityFailed, now); err != nil {
-			return fmt.Errorf("fail activity: %w", err)
-		}
-		if err := appendHistory(ctx, tx, workflowID, &claim.ActivityID, &claim.AttemptID, "activity.failed", map[string]any{"error": errorText}, now); err != nil {
-			return err
-		}
-		if err := ValidateWorkflowTransition(WorkflowRunning, WorkflowFailed); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE workflow_executions SET state = $2, updated_at = $3, completed_at = $3 WHERE id = $1 AND state = $4`, workflowID, WorkflowFailed, now, WorkflowRunning); err != nil {
-			return fmt.Errorf("fail workflow: %w", err)
-		}
-		if err := appendHistory(ctx, tx, workflowID, nil, nil, "workflow.failed", map[string]any{"activity_id": claim.ActivityID}, now); err != nil {
+		d := delivery{workflowID: workflowID, activityID: claim.ActivityID, attemptID: claim.AttemptID, leaseID: leaseID}
+		if err := e.recordAttemptFailure(ctx, tx, d, AttemptFailed, failureMessage(activityErr), isPermanent(activityErr), now); err != nil {
 			return err
 		}
 	} else {
@@ -414,7 +407,7 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 		if _, err := tx.Exec(ctx, `UPDATE attempts SET state = $2, ended_at = $3 WHERE id = $1`, claim.AttemptID, AttemptCompleted, now); err != nil {
 			return fmt.Errorf("complete attempt: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `UPDATE activities SET state = $2, output = $3, updated_at = $4, completed_at = $4 WHERE id = $1`, claim.ActivityID, ActivityCompleted, output, now); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE activities SET state = $2, output = $3, updated_at = $4, completed_at = $4, last_error='' WHERE id = $1`, claim.ActivityID, ActivityCompleted, output, now); err != nil {
 			return fmt.Errorf("complete activity: %w", payloadDatabaseError(err))
 		}
 		if err := appendHistory(ctx, tx, workflowID, &claim.ActivityID, &claim.AttemptID, "activity.completed", map[string]any{"attempt": claim.AttemptNumber}, now); err != nil {

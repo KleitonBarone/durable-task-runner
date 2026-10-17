@@ -19,6 +19,7 @@ const (
 	ActivityBlocked   ActivityState = "blocked"
 	ActivityReady     ActivityState = "ready"
 	ActivityRunning   ActivityState = "running"
+	ActivityWaiting   ActivityState = "retry_wait"
 	ActivityCompleted ActivityState = "completed"
 	ActivityFailed    ActivityState = "failed"
 )
@@ -50,32 +51,40 @@ type WorkflowExecution struct {
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 	CompletedAt    *time.Time
+	TerminalReason string
+	LastError      string
 }
 
 type Activity struct {
-	ID           string
-	WorkflowID   string
-	Position     int
-	StepKey      string
-	Name         string
-	Input        json.RawMessage
-	Output       json.RawMessage
-	State        ActivityState
-	AttemptCount int
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	CompletedAt  *time.Time
+	ID             string
+	WorkflowID     string
+	Position       int
+	StepKey        string
+	Name           string
+	Input          json.RawMessage
+	Output         json.RawMessage
+	State          ActivityState
+	AttemptCount   int
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	CompletedAt    *time.Time
+	RetryPolicy    RetryPolicy
+	AvailableAt    time.Time
+	AttemptTimeout time.Duration
+	LastError      string
 }
 
 type Attempt struct {
-	ID         string
-	ActivityID string
-	Number     int
-	WorkerID   string
-	State      AttemptState
-	Error      string
-	StartedAt  time.Time
-	EndedAt    *time.Time
+	ID            string
+	ActivityID    string
+	Number        int
+	WorkerID      string
+	State         AttemptState
+	Error         string
+	StartedAt     time.Time
+	EndedAt       *time.Time
+	RetryDecision string
+	RetryDueAt    *time.Time
 }
 
 type Lease struct {

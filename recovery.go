@@ -21,7 +21,7 @@ func (e *Engine) RecoverAbandoned(ctx context.Context, limit int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	rows, err := tx.Query(ctx, `SELECT w.id FROM workflow_executions w WHERE w.state='running' AND EXISTS (SELECT 1 FROM activities a JOIN leases l ON l.activity_id=a.id WHERE a.workflow_id=w.id AND l.state='active' AND l.expires_at <= $1) ORDER BY w.id FOR UPDATE OF w SKIP LOCKED LIMIT $2`, searchTime, limit)
+	rows, err := tx.Query(ctx, `SELECT w.id FROM workflow_executions w WHERE w.state='running' AND (EXISTS (SELECT 1 FROM activities a JOIN leases l ON l.activity_id=a.id WHERE a.workflow_id=w.id AND l.state='active' AND l.expires_at <= $1) OR EXISTS (SELECT 1 FROM activities a WHERE a.workflow_id=w.id AND a.state='retry_wait' AND a.available_at <= $1)) ORDER BY w.id FOR UPDATE OF w SKIP LOCKED LIMIT $2`, searchTime, limit)
 	if err != nil {
 		return 0, fmt.Errorf("select recovery workflows: %w", err)
 	}
@@ -86,22 +86,37 @@ func (e *Engine) recoverWorkflow(ctx context.Context, tx pgx.Tx, workflowID stri
 		if item.expiresAt.After(now) {
 			continue
 		}
-		if _, err := tx.Exec(ctx, `UPDATE leases SET state='expired', ended_at=$2 WHERE id=$1`, item.leaseID, now); err != nil {
-			return 0, err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE attempts SET state='abandoned', ended_at=$2 WHERE id=$1`, item.attemptID, now); err != nil {
-			return 0, err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE activities SET state='ready', updated_at=$2 WHERE id=$1`, item.activityID, now); err != nil {
-			return 0, err
-		}
-		if err := appendHistory(ctx, tx, workflowID, &item.activityID, &item.attemptID, "attempt.abandoned", map[string]any{"reason": "lease_expired"}, now); err != nil {
-			return 0, err
-		}
-		if err := appendHistory(ctx, tx, workflowID, &item.activityID, nil, "activity.recovered", map[string]any{}, now); err != nil {
+		d := delivery{workflowID: workflowID, activityID: item.activityID, attemptID: item.attemptID, leaseID: item.leaseID}
+		if err := e.recordAttemptFailure(ctx, tx, d, AttemptAbandoned, "lease_expired", false, now); err != nil {
 			return 0, err
 		}
 		recovered++
 	}
-	return recovered, nil
+	rows, err = tx.Query(ctx, `SELECT a.id FROM activities a JOIN workflow_executions w ON w.id=a.workflow_id WHERE a.workflow_id=$1 AND w.state='running' AND a.state='retry_wait' AND a.available_at <= $2 FOR UPDATE OF a`, workflowID, now)
+	if err != nil {
+		return 0, err
+	}
+	var due []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		due = append(due, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return 0, err
+	}
+	for _, id := range due {
+		if _, err := tx.Exec(ctx, `UPDATE activities SET state='ready',updated_at=$2 WHERE id=$1`, id, now); err != nil {
+			return 0, err
+		}
+		if err := appendHistory(ctx, tx, workflowID, &id, nil, "activity.ready", map[string]any{"reason": "retry_due"}, now); err != nil {
+			return 0, err
+		}
+	}
+	return recovered + len(due), nil
 }

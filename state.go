@@ -15,8 +15,9 @@ func ValidateWorkflowTransition(from, to WorkflowState) error {
 func ValidateActivityTransition(from, to ActivityState) error {
 	allowed := map[ActivityState]map[ActivityState]bool{
 		ActivityBlocked: {ActivityReady: true},
-		ActivityReady:   {ActivityRunning: true},
-		ActivityRunning: {ActivityReady: true, ActivityCompleted: true, ActivityFailed: true},
+		ActivityReady:   {ActivityRunning: true, ActivityFailed: true},
+		ActivityRunning: {ActivityReady: true, ActivityWaiting: true, ActivityCompleted: true, ActivityFailed: true},
+		ActivityWaiting: {ActivityReady: true},
 	}
 	if !allowed[from][to] {
 		return fmt.Errorf("invalid activity transition %q -> %q", from, to)
