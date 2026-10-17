@@ -185,6 +185,12 @@ separate consumer's abandoned-owner recovery and two-database snapshot rehearsal
 The Linux race suite's root-package tests took 15.0 seconds. These are local
 verification timings, not runtime throughput measurements.
 
+At the v1 qualified commit `91837ea`, warm full verification took 92.7 seconds and
+race verification 63.0 seconds on Windows with Go 1.26.9 and WSL Docker. The two
+commands ran concurrently, including container setup and cleanup. The root race
+suite took 21.2 seconds. Final merged-commit Linux CI also passed full checks with
+the exact minimum toolchain and current Go 1.27 patches.
+
 ## Database measurements
 
 For repeatable isolated database measurements, use `go run ./cmd/dev bench`.

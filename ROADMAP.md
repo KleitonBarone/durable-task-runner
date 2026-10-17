@@ -1,8 +1,9 @@
 # Roadmap to v1
 
-This is the implementation plan for the first complete release. Milestones 0 and
-1, 1A, 1B, milestone 2, and milestone 3 are implemented. Release qualification is next.
-Every unchecked item below is planned work.
+This implementation plan is complete. Milestones 0 through 4 passed their exit
+gates, including candidate-tag and final-tag installation and process recovery.
+[v1.0.0](https://github.com/KleitonBarone/durable-task-runner/releases/tag/v1.0.0)
+is published at `91837eae7beeaab3c8067b9b5daf265a974bc911`.
 
 See the [delivery plan](docs/delivery-plan.md) for ordered commits, branches,
 verification before each push, draft PR checkpoints, and release publication.
@@ -70,18 +71,18 @@ The original crash test simulates disappearance by withholding acknowledgement,
 advancing a manual clock, and calling recovery. Milestone 1A adds real worker
 process crashes, scheduler restart, graceful shutdown, and controlled loop tests.
 
-### Gaps found in the current implementation
+### Gaps closed during implementation
 
-| Area | Evidence in the repository | Work required before v1 |
+| Area | Evidence in the repository | Resolution and maintenance |
 | --- | --- | --- |
-| Installation | Canonical module is `github.com/KleitonBarone/durable-task-runner`, verified from a separate module | Implemented in 1B; candidate-tag verification remains in milestone 4 |
+| Installation | Canonical module is `github.com/KleitonBarone/durable-task-runner`, verified from a separate module | Candidate and final v1 tags installed from fresh caches and recovered pending work |
 | Local loop | `cmd/dev` runs from PowerShell or POSIX shells and selects Docker through WSL when needed | Implemented in 1A; keep CI and local commands aligned |
 | Database checks | Explicit integration runs require a reachable database; `check` provisions its own | Implemented in 1A; preserve failure on missing dependencies |
 | Test control | `ManualClock` controls timestamps and runtime tickers | Implemented in 1A; extend deterministic coverage with new transitions |
-| Process recovery | Separate worker/scheduler processes cover crashes before/after effects, shutdown, restart, and stale tokens | Implemented in 1A; extend the harness for retries, cancellation, and cleanup |
+| Process recovery | Separate worker/scheduler processes cover crashes before/after effects, shutdown, restart, and stale tokens | Implemented in 1A and extended through retries, cancellation, cleanup, and handler upgrades |
 | Worker behavior | Workers filter compatible contracts, continue after task failures, and bound reconnect/shutdown | Implemented in 1B; persisted retry/deadline policies added in 2A |
 | Failure acknowledgement | Explicit error presence controls failure, including empty messages and handler panics | Implemented in 1B; preserve this distinction in later terminal outcomes |
-| Integration | Typed activities, stable step/effect keys, keyed starts, prior/final results, and external consumer | Implemented in 1B; tagged-module qualification remains in milestone 4 |
+| Integration | Typed activities, stable step/effect keys, keyed starts, prior/final results, and external consumer | Implemented in 1B and qualified at v1.0.0 |
 | Evolution | Versioned workflow/handler/cleanup contracts, migration guards, history fixtures, and restored pending work | Implemented in 3A; retain these upgrade checks for releases |
 | Operations | Bounded CLI/API inspection, redacted diagnostics, optional telemetry, terminal retention, and measured load | Implemented in 3B; preserve bounded reads and indefinite start-key deduplication |
 
@@ -430,7 +431,7 @@ database connection; local health and telemetry diagnose a database outage.
 
 - [x] Run the matrix below through the same local/CI entry points. Keep one
   authoritative scenario per guarantee, supported by focused boundary tests.
-- [ ] Verify an external consumer against the candidate tag without local replacements.
+- [x] Verify an external consumer against the candidate tag without local replacements.
   Run its quickstart and process recovery scenario.
 - [x] Finish Go API documentation and examples. Keep the README short and link to
   integration, development, guarantees, operations, and upgrades. Compile examples
@@ -441,9 +442,13 @@ database connection; local health and telemetry diagnose a database outage.
   time authority, handler panics, and shutdown. Fix correctness defects before adding
   convenience features.
 - [x] Run dependency/vulnerability checks and document defect reporting.
-- [ ] Prepare a changelog, versioned notes, installation instructions, and compatibility
+- [x] Prepare a changelog, versioned notes, installation instructions, and compatibility
   policy. Publish a prerelease first. Tag v1 only when every gate passes. Publishing
   remains a separate release action.
+
+Release evidence, exact CI/commit identities, local timings, and public installation
+results are recorded in [release qualification](docs/release.md). Both immutable
+tags resolve to the same qualified commit. No production deployment was performed.
 
 ### Release verification matrix
 
@@ -472,5 +477,5 @@ state-machine ADR, SQL constraints, tests, and user docs together when semantics
 change. Introduce verification before the feature it must verify, then extend it
 at each milestone.
 
-The next action is release qualification after the operations PR merges.
-Candidate-tag verification and v1 publication remain.
+The bounded v1 scope is complete. The exclusions above remain outside this release;
+future functionality needs a separate scoped roadmap and acceptance gates.
