@@ -12,7 +12,7 @@ func (e *Engine) RecoverAbandoned(ctx context.Context, limit int) (int, error) {
 	if limit <= 0 {
 		return 0, fmt.Errorf("recovery limit must be positive")
 	}
-	tx, err := e.pool.Begin(ctx)
+	tx, err := e.beginExecution(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("begin recovery: %w", err)
 	}

@@ -22,7 +22,7 @@ type Worker struct {
 	engine        *Engine
 	config        WorkerConfig
 	handlers      map[string]Handler
-	capabilities  map[string]string
+	capabilities  map[string]capability
 	loopActive    atomic.Bool
 	claimActive   atomic.Bool
 	handlerActive atomic.Bool
@@ -71,20 +71,38 @@ func NewWorker(engine *Engine, config WorkerConfig, registrations ...HandlerRegi
 	}
 	handlers := make(map[string]Handler, len(registrations))
 	contracts := make(map[string]string, len(registrations))
+	capabilities := make(map[string]capability, len(registrations))
 	for _, registration := range registrations {
 		if registration.Name == "" || registration.Handler == nil {
 			return nil, fmt.Errorf("handler name and function are required")
 		}
-		if _, exists := handlers[registration.Name]; exists {
+		if !registration.explicitVersion {
+			if registration.Version == "" {
+				registration.Version = defaultVersion
+			}
+			if registration.InputSchema == "" {
+				registration.InputSchema = legacySchema
+			}
+			if registration.OutputSchema == "" {
+				registration.OutputSchema = legacySchema
+			}
+		}
+		c := capability{registration.Name, registration.Version, registration.contract, registration.InputSchema, registration.OutputSchema}
+		if err := c.validate(); err != nil {
+			return nil, err
+		}
+		key := activityKey(c.name, c.version)
+		if _, exists := handlers[key]; exists {
 			return nil, fmt.Errorf("handler %q is registered twice", registration.Name)
 		}
-		handlers[registration.Name] = registration.Handler
-		contracts[registration.Name] = registration.contract
+		handlers[key] = registration.Handler
+		contracts[key] = c.signature()
+		capabilities[key] = c
 	}
 	if err := engine.registry.bindActivities(contracts); err != nil {
 		return nil, err
 	}
-	return &Worker{engine: engine, config: config, handlers: handlers, capabilities: contracts}, nil
+	return &Worker{engine: engine, config: config, handlers: handlers, capabilities: capabilities}, nil
 }
 
 // RunOnce claims at most one activity and waits for its handler to finish. It
@@ -122,7 +140,7 @@ func (w *Worker) runOnce(ctx context.Context) (bool, error) {
 	if w.loopActive.Load() {
 		w.health.observe(w.engine.clock, nil, 0)
 	}
-	handler, ok := w.handlers[claim.ActivityName]
+	handler, ok := w.handlers[activityKey(claim.ActivityName, claim.ActivityVersion)]
 	if !ok {
 		return true, fmt.Errorf("worker %q claimed an unsupported activity %q", w.config.ID, claim.ActivityName)
 	}

@@ -75,10 +75,10 @@ func (e *Engine) beginCompensation(ctx context.Context, tx pgx.Tx, id string, ou
 			state = ActivityReady
 		}
 		plan := item.plan
-		if _, err := tx.Exec(ctx, `INSERT INTO activities(id,workflow_id,position,name,input,state,created_at,updated_at,step_key,contract,retry_policy,attempt_timeout_ns,available_at,kind,compensates_id) VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9,$10,$11,$7,'compensation',$12)`, activityID, id, position+i, plan.Name, plan.Input, state, now, "compensate:"+item.parent, plan.Contract, plan.RetryPolicy, plan.AttemptTimeout, item.parent); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO activities(id,workflow_id,position,name,input,state,created_at,updated_at,step_key,contract,retry_policy,attempt_timeout_ns,available_at,kind,compensates_id,version,input_schema,output_schema) VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9,$10,$11,$7,'compensation',$12,$13,$14,$15)`, activityID, id, position+i, plan.Name, plan.Input, state, now, "compensate:"+item.parent, plan.Contract, plan.RetryPolicy, plan.AttemptTimeout, item.parent, plan.Version, plan.InputSchema, plan.OutputSchema); err != nil {
 			return payloadDatabaseError(err)
 		}
-		if err := appendHistory(ctx, tx, id, &activityID, nil, "compensation.scheduled", map[string]any{"compensates_id": item.parent, "state": state, "name": plan.Name}, now); err != nil {
+		if err := appendHistory(ctx, tx, id, &activityID, nil, "compensation.scheduled", map[string]any{"compensates_id": item.parent, "state": state, "name": plan.Name, "version": plan.Version}, now); err != nil {
 			return err
 		}
 	}

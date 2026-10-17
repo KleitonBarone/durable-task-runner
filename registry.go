@@ -13,6 +13,9 @@ import (
 
 type ActivitySpec struct {
 	Name           string
+	Version        string
+	InputSchema    string
+	OutputSchema   string
 	Key            string
 	Input          json.RawMessage
 	contract       string
@@ -40,20 +43,32 @@ func NewActivity[Input any](name string, input Input, options ...StepOption) (Ac
 }
 
 // Definition turns typed workflow input into a deterministic linear activity
-// plan. Definition code is not persisted, so a registered name must retain the
-// same meaning while executions using it are in progress.
+// plan. A name and version must retain the same meaning while executions using
+// them are in progress. Existing executions continue their stored plan.
 type Definition[Input any] struct {
-	Name string
-	Plan func(Input) ([]ActivitySpec, error)
+	Name            string
+	Version         string
+	InputSchema     string
+	explicitVersion bool
+	Plan            func(Input) ([]ActivitySpec, error)
 }
 
 func Define[Input any](name string, plan func(Input) ([]ActivitySpec, error)) Definition[Input] {
-	return Definition[Input]{Name: name, Plan: plan}
+	return Definition[Input]{Name: name, Version: defaultVersion, InputSchema: legacySchema, Plan: plan}
+}
+
+// WithVersion declares an immutable workflow version and input schema identity.
+// Register old and new versions together while old executions drain.
+func (d Definition[Input]) WithVersion(version, inputSchema string) Definition[Input] {
+	d.Version, d.InputSchema, d.explicitVersion = version, inputSchema, true
+	return d
 }
 
 type registeredDefinition struct {
-	inputType  reflect.Type
-	encodePlan func(any) (json.RawMessage, []ActivitySpec, error)
+	version     string
+	inputSchema string
+	inputType   reflect.Type
+	encodePlan  func(any) (json.RawMessage, []ActivitySpec, error)
 }
 
 type Registry struct {
@@ -70,15 +85,27 @@ func Register[Input any](registry *Registry, definition Definition[Input]) error
 	if registry == nil {
 		return fmt.Errorf("registry is required")
 	}
-	if strings.TrimSpace(definition.Name) == "" {
+	if !validIdentity(definition.Name, 200) {
 		return fmt.Errorf("workflow name is required")
 	}
 	if definition.Plan == nil {
 		return fmt.Errorf("workflow %q plan is required", definition.Name)
 	}
+	if !definition.explicitVersion {
+		if definition.Version == "" {
+			definition.Version = defaultVersion
+		}
+		if definition.InputSchema == "" {
+			definition.InputSchema = legacySchema
+		}
+	}
+	if !validIdentity(definition.Version, 100) || !validIdentity(definition.InputSchema, 200) {
+		return fmt.Errorf("%w: workflow version and input schema identity are required", ErrInvalidInput)
+	}
 
 	inputType := reflect.TypeFor[Input]()
 	entry := registeredDefinition{
+		version: definition.Version, inputSchema: definition.InputSchema,
 		inputType: inputType,
 		encodePlan: func(value any) (json.RawMessage, []ActivitySpec, error) {
 			typed, ok := value.(Input)
@@ -126,20 +153,25 @@ func Register[Input any](registry *Registry, definition Definition[Input]) error
 
 	registry.mu.Lock()
 	defer registry.mu.Unlock()
-	if _, exists := registry.definitions[definition.Name]; exists {
+	key := activityKey(definition.Name, definition.Version)
+	if _, exists := registry.definitions[key]; exists {
 		return fmt.Errorf("workflow %q is already registered", definition.Name)
 	}
-	registry.definitions[definition.Name] = entry
+	registry.definitions[key] = entry
 	return nil
 }
 
 func (r *Registry) lookup(name string) (registeredDefinition, bool) {
+	return r.lookupVersion(name, defaultVersion)
+}
+
+func (r *Registry) lookupVersion(name, version string) (registeredDefinition, bool) {
 	if r == nil {
 		return registeredDefinition{}, false
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	definition, ok := r.definitions[name]
+	definition, ok := r.definitions[activityKey(name, version)]
 	return definition, ok
 }
 
@@ -160,15 +192,23 @@ func (r *Registry) bindActivities(contracts map[string]string) error {
 }
 
 func Start[Input any](ctx context.Context, engine *Engine, definition Definition[Input], input Input, options ...StartOption) (WorkflowExecution, error) {
-	return engine.start(ctx, definition.Name, input, options...)
+	version := definition.Version
+	if version == "" && !definition.explicitVersion {
+		version = defaultVersion
+	}
+	return engine.start(ctx, definition.Name, version, input, options...)
 }
 
 type Handler func(context.Context, json.RawMessage) (json.RawMessage, error)
 
 type HandlerRegistration struct {
-	Name     string
-	Handler  Handler
-	contract string
+	Name            string
+	Version         string
+	InputSchema     string
+	OutputSchema    string
+	Handler         Handler
+	contract        string
+	explicitVersion bool
 }
 
 func Handle[Input, Output any](name string, handler func(context.Context, Input) (Output, error)) HandlerRegistration {
@@ -176,7 +216,8 @@ func Handle[Input, Output any](name string, handler func(context.Context, Input)
 		return HandlerRegistration{Name: name}
 	}
 	return HandlerRegistration{
-		Name: name,
+		Name:    name,
+		Version: defaultVersion, InputSchema: legacySchema, OutputSchema: legacySchema,
 		Handler: func(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 			// Persisted input has already passed validation. jsonb can add
 			// whitespace, so its returned byte size is not the original limit.

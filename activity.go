@@ -9,11 +9,19 @@ import (
 // ActivityDefinition ties one durable name to its Go input and output types.
 // Keep names and types compatible while executions using them are in progress.
 type ActivityDefinition[Input, Output any] struct {
-	name string
+	name                               string
+	version, inputSchema, outputSchema string
 }
 
 func DefineActivity[Input, Output any](name string) ActivityDefinition[Input, Output] {
-	return ActivityDefinition[Input, Output]{name: name}
+	return ActivityDefinition[Input, Output]{name: name, version: defaultVersion, inputSchema: legacySchema, outputSchema: legacySchema}
+}
+
+// WithVersion declares handler and payload compatibility explicitly. Keep the
+// previous version registered until its forward and cleanup work has drained.
+func (a ActivityDefinition[Input, Output]) WithVersion(version, inputSchema, outputSchema string) ActivityDefinition[Input, Output] {
+	a.version, a.inputSchema, a.outputSchema = version, inputSchema, outputSchema
+	return a
 }
 
 func (a ActivityDefinition[Input, Output]) contract() string {
@@ -59,11 +67,17 @@ func (a ActivityDefinition[Input, Output]) Step(key string, input Input, options
 		return ActivitySpec{}, err
 	}
 	spec.Key, spec.contract = key, a.contract()
+	spec.Version, spec.InputSchema, spec.OutputSchema = a.version, a.inputSchema, a.outputSchema
+	if err := (capability{a.name, a.version, a.contract(), a.inputSchema, a.outputSchema}).validate(); err != nil {
+		return ActivitySpec{}, err
+	}
 	return spec, nil
 }
 
 func (a ActivityDefinition[Input, Output]) Handle(handler func(context.Context, Input) (Output, error)) HandlerRegistration {
 	registration := Handle(a.name, handler)
 	registration.contract = a.contract()
+	registration.Version, registration.InputSchema, registration.OutputSchema = a.version, a.inputSchema, a.outputSchema
+	registration.explicitVersion = true
 	return registration
 }

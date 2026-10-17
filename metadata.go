@@ -13,6 +13,9 @@ type ActivityMetadata struct {
 	WorkflowID            string
 	ActivityID            string
 	ActivityName          string
+	ActivityVersion       string
+	InputSchema           string
+	OutputSchema          string
 	StepKey               string
 	WorkerID              string
 	AttemptID             string
@@ -29,6 +32,7 @@ func Metadata(ctx context.Context) (ActivityMetadata, bool) {
 	claim := current.claim
 	return ActivityMetadata{Kind: claim.Kind, CompensatesActivityID: claim.CompensatesActivityID, WorkflowID: claim.WorkflowID, ActivityID: claim.ActivityID,
 		ActivityName: claim.ActivityName, StepKey: claim.StepKey, WorkerID: claim.WorkerID,
+		ActivityVersion: claim.ActivityVersion, InputSchema: claim.InputSchema, OutputSchema: claim.OutputSchema,
 		AttemptID: claim.AttemptID, AttemptNumber: claim.AttemptNumber,
 		EffectKey: "durable:" + claim.ActivityID, AttemptDeadline: claim.AttemptDeadline}, true
 }
