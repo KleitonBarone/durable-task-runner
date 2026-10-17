@@ -8,10 +8,12 @@ import (
 type WorkflowState string
 
 const (
-	WorkflowRunning   WorkflowState = "running"
-	WorkflowCompleted WorkflowState = "completed"
-	WorkflowFailed    WorkflowState = "failed"
-	WorkflowTimedOut  WorkflowState = "timed_out"
+	WorkflowRunning         WorkflowState = "running"
+	WorkflowCompleted       WorkflowState = "completed"
+	WorkflowFailed          WorkflowState = "failed"
+	WorkflowTimedOut        WorkflowState = "timed_out"
+	WorkflowCancelRequested WorkflowState = "cancel_requested"
+	WorkflowCancelled       WorkflowState = "cancelled"
 )
 
 type ActivityState string
@@ -24,6 +26,7 @@ const (
 	ActivityCompleted ActivityState = "completed"
 	ActivityFailed    ActivityState = "failed"
 	ActivityTimedOut  ActivityState = "timed_out"
+	ActivityCancelled ActivityState = "cancelled"
 )
 
 type AttemptState string
@@ -34,6 +37,7 @@ const (
 	AttemptFailed    AttemptState = "failed"
 	AttemptAbandoned AttemptState = "abandoned"
 	AttemptTimedOut  AttemptState = "timed_out"
+	AttemptCancelled AttemptState = "cancelled"
 )
 
 type LeaseState string
@@ -59,6 +63,10 @@ type WorkflowExecution struct {
 	DeadlineAt          time.Time
 	Timeout             time.Duration
 	PreviousExecutionID *string
+	CancelActor         string
+	CancelReason        string
+	CancelRequestedAt   *time.Time
+	CancelSettledAt     *time.Time
 }
 
 type Activity struct {

@@ -21,7 +21,7 @@ func (e *Engine) RecoverAbandoned(ctx context.Context, limit int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	rows, err := tx.Query(ctx, `SELECT w.id FROM workflow_executions w WHERE w.state='running' AND (w.deadline_at <= $1 OR EXISTS (SELECT 1 FROM activities a JOIN leases l ON l.activity_id=a.id WHERE a.workflow_id=w.id AND l.state='active' AND l.expires_at <= $1) OR EXISTS (SELECT 1 FROM activities a WHERE a.workflow_id=w.id AND a.state='retry_wait' AND a.available_at <= $1)) ORDER BY w.id FOR UPDATE OF w SKIP LOCKED LIMIT $2`, searchTime, limit)
+	rows, err := tx.Query(ctx, `SELECT w.id FROM workflow_executions w WHERE w.state='cancel_requested' OR (w.state='running' AND (w.deadline_at <= $1 OR EXISTS (SELECT 1 FROM activities a JOIN leases l ON l.activity_id=a.id WHERE a.workflow_id=w.id AND l.state='active' AND l.expires_at <= $1) OR EXISTS (SELECT 1 FROM activities a WHERE a.workflow_id=w.id AND a.state='retry_wait' AND a.available_at <= $1))) ORDER BY w.id FOR UPDATE OF w SKIP LOCKED LIMIT $2`, searchTime, limit)
 	if err != nil {
 		return 0, fmt.Errorf("select recovery workflows: %w", err)
 	}
@@ -55,6 +55,26 @@ func (e *Engine) RecoverAbandoned(ctx context.Context, limit int) (int, error) {
 
 // The caller owns the workflow row before this function locks its ownership rows.
 func (e *Engine) recoverWorkflow(ctx context.Context, tx pgx.Tx, workflowID string) (int, error) {
+	var state WorkflowState
+	if err := tx.QueryRow(ctx, `SELECT state FROM workflow_executions WHERE id=$1`, workflowID).Scan(&state); err != nil {
+		return 0, err
+	}
+	if state == WorkflowCancelRequested {
+		now, err := e.now(ctx, tx)
+		if err != nil {
+			return 0, err
+		}
+		if err := ValidateWorkflowTransition(state, WorkflowCancelled); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE workflow_executions SET state='cancelled',cancel_settled_at=$2,updated_at=$2,completed_at=$2 WHERE id=$1`, workflowID, now); err != nil {
+			return 0, err
+		}
+		return 1, appendHistory(ctx, tx, workflowID, nil, nil, "workflow.cancelled", map[string]any{}, now)
+	}
+	if state != WorkflowRunning {
+		return 0, nil
+	}
 	rows, err := tx.Query(ctx, `SELECT l.id, l.activity_id, l.attempt_id, l.expires_at,at.deadline_at FROM leases l JOIN activities a ON a.id=l.activity_id JOIN attempts at ON at.id=l.attempt_id WHERE a.workflow_id=$1 AND l.state='active' AND a.state='running' AND at.state='running' FOR UPDATE OF a, at, l`, workflowID)
 	if err != nil {
 		return 0, err

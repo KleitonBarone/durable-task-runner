@@ -10,6 +10,10 @@ func TestStateTransitions(t *testing.T) {
 	}{
 		{name: "workflow completes", valid: true, check: func() error { return ValidateWorkflowTransition(WorkflowRunning, WorkflowCompleted) }},
 		{name: "completed workflow cannot restart", check: func() error { return ValidateWorkflowTransition(WorkflowCompleted, WorkflowRunning) }},
+		{name: "workflow requests cancellation", valid: true, check: func() error { return ValidateWorkflowTransition(WorkflowRunning, WorkflowCancelRequested) }},
+		{name: "cancellation settles", valid: true, check: func() error { return ValidateWorkflowTransition(WorkflowCancelRequested, WorkflowCancelled) }},
+		{name: "cancellation cannot complete", check: func() error { return ValidateWorkflowTransition(WorkflowCancelRequested, WorkflowCompleted) }},
+		{name: "cancelled workflow cannot restart", check: func() error { return ValidateWorkflowTransition(WorkflowCancelled, WorkflowRunning) }},
 		{name: "blocked activity becomes ready", valid: true, check: func() error { return ValidateActivityTransition(ActivityBlocked, ActivityReady) }},
 		{name: "ready activity cannot complete without a claim", check: func() error { return ValidateActivityTransition(ActivityReady, ActivityCompleted) }},
 		{name: "abandoned activity becomes ready", valid: true, check: func() error { return ValidateActivityTransition(ActivityRunning, ActivityReady) }},
