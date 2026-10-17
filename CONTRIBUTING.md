@@ -4,7 +4,7 @@
 
 ## Start with one command
 
-Install Go 1.24 or later and Docker with Compose, then run:
+Install Go 1.26.9 or later and Docker with Compose, then run:
 
 ```sh
 go run ./cmd/dev check
@@ -108,7 +108,7 @@ have deadlines and cleanup; their output is attached to a failed test. Precise
 expiry/heartbeat boundaries belong to manual-clock tests, not timing sleeps.
 
 `race` also creates an isolated database. Linux needs a C compiler. On Windows it
-uses a disposable `golang:1.24-bookworm` container with read-only source and Go
+uses a disposable `golang:1.26.9-bookworm` container with read-only source and Go
 module cache mounts, so a Windows C compiler is unnecessary. Host Go downloads and
 verifies dependencies first. All test effects are local deterministic fakes.
 
@@ -142,9 +142,13 @@ Test databases use the existing bridge network and temporary loopback ports.
 
 ## CI and failure diagnosis
 
-CI runs the same `check` command on Linux with Go 1.24 and 1.26. It repeats process
+CI runs the same `check` command on Linux with Go 1.26 and 1.27. It repeats process
 recovery and runs a separate race job with repeated claim/recovery cases. Native
 Windows checks formatting, static analysis, unit tests, and command/WSL selection.
+The security job runs `go run ./cmd/dev vuln`, with pinned govulncheck and a current
+advisory database. Run it after dependency changes and before release. Keep build
+toolchains on current patch releases of the supported Go versions. See
+[ADR 0008](docs/decisions/0008-supported-runtime-and-security-checks.md).
 
 To retain local command output in ignored `artifacts/`:
 

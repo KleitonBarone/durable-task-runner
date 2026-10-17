@@ -7,6 +7,10 @@ Every unchecked item below is planned work.
 See the [delivery plan](docs/delivery-plan.md) for ordered commits, branches,
 verification before each push, draft PR checkpoints, and release publication.
 
+The release dependency scan was moved ahead of 3B after finding affected driver,
+text, and toolchain versions. ADR 0008 sets the patched Go 1.26.9 baseline and
+adds the reproducible `vuln` check. Final release scanning remains required.
+
 ## What completion means
 
 Durable Task Runner should let a Go application run a sequence of background
@@ -75,7 +79,7 @@ process crashes, scheduler restart, graceful shutdown, and controlled loop tests
 | Database checks | Explicit integration runs require a reachable database; `check` provisions its own | Implemented in 1A; preserve failure on missing dependencies |
 | Test control | `ManualClock` controls timestamps and runtime tickers | Implemented in 1A; extend deterministic coverage with new transitions |
 | Process recovery | Separate worker/scheduler processes cover crashes before/after effects, shutdown, restart, and stale tokens | Implemented in 1A; extend the harness for retries, cancellation, and cleanup |
-| Worker behavior | Workers filter by name/type contract, continue after task failures, and bound reconnect/shutdown | Implemented in 1B; persisted retry/deadline policies remain in 2A |
+| Worker behavior | Workers filter compatible contracts, continue after task failures, and bound reconnect/shutdown | Implemented in 1B; persisted retry/deadline policies added in 2A |
 | Failure acknowledgement | Explicit error presence controls failure, including empty messages and handler panics | Implemented in 1B; preserve this distinction in later terminal outcomes |
 | Integration | Typed activities, stable step/effect keys, keyed starts, prior/final results, and external consumer | Implemented in 1B; tagged-module qualification remains in milestone 4 |
 | Evolution | Versioned workflow/handler/cleanup contracts, migration guards, history fixtures, and restored pending work | Implemented in 3A; retain these upgrade checks for releases |

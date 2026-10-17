@@ -75,7 +75,7 @@ func repositoryRoot() (string, error) {
 
 func (a *app) run(ctx context.Context, args []string) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
-		fmt.Println("Usage: go run ./cmd/dev <doctor|up|down|test|integration|e2e|check|race|restore|example|consumer|fmt|fmt-check|lint> [go test arguments]")
+		fmt.Println("Usage: go run ./cmd/dev <doctor|up|down|test|integration|e2e|check|race|restore|vuln|example|consumer|fmt|fmt-check|lint> [go test arguments]")
 		return nil
 	}
 	switch args[0] {
@@ -176,6 +176,12 @@ func (a *app) run(ctx context.Context, args []string) error {
 			return err
 		}
 		_, err := a.command(ctx, "go", "vet", "-tags=integration,e2e", "./...")
+		return err
+	case "vuln":
+		if _, err := a.command(ctx, "go", "run", "golang.org/x/vuln/cmd/govulncheck@v1.9.0", "./..."); err != nil {
+			return err
+		}
+		_, err := a.command(ctx, "go", "run", "golang.org/x/vuln/cmd/govulncheck@v1.9.0", "-tags=integration,e2e", "./...")
 		return err
 	default:
 		return fmt.Errorf("unknown command %q; run go run ./cmd/dev help", args[0])

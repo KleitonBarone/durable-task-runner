@@ -260,6 +260,14 @@ into another isolated database. The standalone consumer now also recovers an
 abandoned delivery using only public APIs. Full checks pass in 75.5 seconds and
 race checks pass. Operations and release publication remain planned.
 
+PR #6 passed all four CI checks on `7606b68`, installed from a fresh external
+module cache with process recovery, and merged at `db8a651`. Before 3B, an early
+release scan found known vulnerable symbols in the pinned dependencies/toolchain.
+The `fix/patched-runtime` prerequisite updates pgx/text, raises the Go baseline
+to patched supported releases, and adds a pinned vulnerability command and CI job.
+This brings checkpoint 42's dependency gate forward; final release auditing and
+scanning still run after all features land.
+
 ## Batch 3B. Make deployments diagnosable
 
 Branch: `feat/operations`. Prerequisite: 3A merged.
