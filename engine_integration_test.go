@@ -33,7 +33,7 @@ func integrationDefinition(steps int) Definition[integrationInput] {
 	})
 }
 
-func newIntegrationEngine(t *testing.T, clock Clock, steps int) (*Engine, Definition[integrationInput]) {
+func newIntegrationEngine(t testing.TB, clock Clock, steps int) (*Engine, Definition[integrationInput]) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

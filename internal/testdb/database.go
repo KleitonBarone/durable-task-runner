@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func Pool(t *testing.T) *pgxpool.Pool {
+func Pool(t testing.TB) *pgxpool.Pool {
 	t.Helper()
 	databaseURL := os.Getenv("DURABLE_TEST_DATABASE_URL")
 	if databaseURL == "" {

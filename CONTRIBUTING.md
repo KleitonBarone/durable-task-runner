@@ -184,6 +184,13 @@ separate consumer's abandoned-owner recovery and two-database snapshot rehearsal
 The Linux race suite's root-package tests took 15.0 seconds. These are local
 verification timings, not runtime throughput measurements.
 
+## Database measurements
+
+For repeatable isolated database measurements, use `go run ./cmd/dev bench`.
+See [benchmarks](docs/benchmarks.md) for workload selection, recorded hardware and
+results, and the bounded recovery load test. Benchmarks are opt-in; correctness
+tests run in the normal `check` and `race` paths.
+
 ## Verify integration from another module
 
 ```sh
