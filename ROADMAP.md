@@ -391,10 +391,10 @@ fixtures; upgrade and restore rehearsal.
   version mismatch, and compensation state. Ordinary diagnosis needs no raw SQL.
 - [x] Add a small CLI for migration, status, attempts, timeline, and cancellation.
   Definitions stay in application binaries; avoid a generic server or code loader.
-- [ ] Emit structured logs with execution, step, attempt, worker, and version IDs.
+- [x] Emit structured logs with execution, step, attempt, worker, and version IDs.
   Add opt-in metrics/tracing hooks and an optional OpenTelemetry adapter. Keep the
   dependency outside the default runtime path if practical.
-- [ ] Measure claim latency, ready-work age, handler duration, lease loss, recovery,
+- [x] Measure claim latency, ready-work age, handler duration, lease loss, recovery,
   retries, exhaustion, cancellation, and cleanup failure. Use low-cardinality metric
   labels. Hide payloads/effect keys by default and make redaction explicit.
 - [ ] Document health, PostgreSQL connection budgets, polling/batches, clock

@@ -80,3 +80,6 @@ when a transactionally consistent audit export is required.
 For handler changes and database upgrades, follow [upgrades](upgrades.md). A
 restored snapshot can redeliver effects; application deduplication must cover the
 business lifetime independently of engine history.
+
+Enable [structured diagnostics and optional OpenTelemetry](observability.md) in
+your application to measure claim age, handler time, recovery, and runtime failures.

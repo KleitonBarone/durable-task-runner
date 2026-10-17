@@ -27,6 +27,10 @@ effect keys, lease tokens, or arbitrary error text. Logging can correlate IDs;
 metric labels contain only finite event/outcome/phase values. Observers must be
 concurrent, quick, and nonblocking. The runtime does not require a telemetry service.
 An optional OpenTelemetry package adapts these hooks, with local in-memory tests.
+Claim-ready age uses persisted eligibility time. When a blocked successor becomes
+ready, set its eligibility time in that same transaction, excluding blocked time.
+Retry due times remain the eligibility authority for redeliveries. Additive history
+detail fields preserve earlier recorded transition interpretation.
 
 Terminal retention is opt-in, bounded, and serialized with workflow mutations.
 Active work is never deleted. Deletion intentionally removes activities, attempts,

@@ -45,7 +45,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		return fmt.Errorf("scheduler instance is already running")
 	}
 	defer s.active.Store(false)
-	return runtimeLoop(ctx, s.engine.clock, s.pollInterval, &s.health, func(ctx context.Context) (bool, error) { _, err := s.RunOnce(ctx); return false, err })
+	return runtimeLoop(ctx, s.engine.clock, s.pollInterval, &s.health, func(ctx context.Context) (bool, error) { _, err := s.RunOnce(ctx); return false, err }, func(err error) { s.engine.runtimeError(ctx, err) })
 }
 
 func (s *Scheduler) Health() RuntimeHealth { return s.health.snapshot() }

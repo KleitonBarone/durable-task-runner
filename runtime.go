@@ -66,7 +66,7 @@ func transientDatabaseError(err error) bool {
 	return errors.As(err, &connectionErr) || errors.As(err, &networkErr) || pgconn.Timeout(err) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
-func runtimeLoop(ctx context.Context, clock Clock, poll time.Duration, health *runtimeHealth, step func(context.Context) (bool, error)) (result error) {
+func runtimeLoop(ctx context.Context, clock Clock, poll time.Duration, health *runtimeHealth, step func(context.Context) (bool, error), onError ...func(error)) (result error) {
 	health.begin()
 	defer func() { health.finish(result) }()
 	ticker := newTicker(clock, poll)
@@ -86,6 +86,9 @@ func runtimeLoop(ctx context.Context, clock Clock, poll time.Duration, health *r
 			health.observe(clock, err, failures)
 			if ctx.Err() != nil {
 				return errors.Join(ctx.Err(), err)
+			}
+			for _, observe := range onError {
+				observe(err)
 			}
 			if errors.Is(err, ErrHandlerUnresponsive) || !transientDatabaseError(err) || failures > 5 {
 				return err

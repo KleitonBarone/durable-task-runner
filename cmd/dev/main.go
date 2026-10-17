@@ -181,7 +181,7 @@ func (a *app) run(ctx context.Context, args []string) error {
 		if _, err := a.command(ctx, "go", "run", "golang.org/x/vuln/cmd/govulncheck@v1.9.0", "./..."); err != nil {
 			return err
 		}
-		_, err := a.command(ctx, "go", "run", "golang.org/x/vuln/cmd/govulncheck@v1.9.0", "-tags=integration,e2e", "./...")
+		_, err := a.command(ctx, "go", "run", "golang.org/x/vuln/cmd/govulncheck@v1.9.0", "-test", "-tags=integration,e2e", "./...")
 		return err
 	default:
 		return fmt.Errorf("unknown command %q; run go run ./cmd/dev help", args[0])

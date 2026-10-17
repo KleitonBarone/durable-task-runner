@@ -293,6 +293,14 @@ deleted rows, redaction, schema upgrades, cancellation fencing, and separate
 original/cleanup failure inspection. Diagnostics, retention, benchmarks, and
 final operating procedures remain for this batch.
 
+Checkpoint 35 is `a9cb346` in PR #8 and passed all five CI checks. Checkpoints
+36 and 37 ship together with commit-only transition observers, monotonic handler
+timing, persisted ready-age measurement, redacted structured logs, runtime/lease
+diagnostics, and an optional OpenTelemetry adapter. Manual metric readers and
+in-memory span export verify measurement and finite labels without a collector.
+The full check, race suite, and ordinary/tagged-test vulnerability scans pass.
+Recorded fixture interpretation still passes with additive detail fields.
+
 ## Batch 4. Qualify the release
 
 Branch: `release/v1`. Prerequisite: 3B merged and all earlier gates still passing.

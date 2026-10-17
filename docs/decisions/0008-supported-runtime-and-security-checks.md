@@ -25,9 +25,9 @@ module, repository shape, and execution semantics remain as chosen there. No
 database migration is needed. This is a prerelease integration requirement change.
 
 `go run ./cmd/dev vuln` runs pinned govulncheck 1.9.0 against ordinary packages and
-tagged integration/process code. CI runs it as a required security check. The
-vulnerability database is intentionally current rather than frozen, so a new
-advisory can fail an otherwise unchanged commit. Review actual symbol reachability
+tagged integration/process code, including test files. CI runs it as a required
+security check. Its vulnerability database stays current, so a new advisory can
+fail an otherwise unchanged commit. Review actual symbol reachability
 and upgrade the affected dependency/toolchain. Do not suppress findings to publish.
 
 Keep the race container and external consumer's Go requirement aligned with the
