@@ -23,7 +23,7 @@ v1.0.0 tag. They preserve the bounded scope above; no release tag is moved.
 2. [x] `fix(types): distinguish embedded struct contracts`. Separate incompatible
    JSON shapes, test routing and result reads, and document draining ambiguous
    v1 contracts without rewriting stored plans. See ADR 0011 and the upgrade guide.
-3. [ ] `fix(input): accept nil interface workflow inputs`. Preserve JSON null
+3. [x] `fix(input): accept nil interface workflow inputs`. Preserve JSON null
    through planning and execution while retaining wrong-type validation.
 
 Each fix includes focused failing-before/passing-after evidence, a reviewed commit,

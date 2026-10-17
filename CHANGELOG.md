@@ -8,6 +8,8 @@
 - Distinguish embedded fields in unnamed struct contracts for worker routing and
   typed results. Affected v1.0.0 plans must drain with their original binary before
   upgrading; see the [upgrade guide](docs/upgrades.md). Stored plans are preserved.
+- Accept nil interface workflow inputs as JSON null, including keyed starts,
+  while retaining concrete input type validation.
 
 ## v1.0.0
 

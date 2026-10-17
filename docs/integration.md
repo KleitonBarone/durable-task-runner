@@ -83,7 +83,9 @@ Each workflow input, step input, and output has a 1 MiB encoded JSON limit.
 Payloads must be valid UTF-8 JSON without NUL strings or numbers outside float64
 decoding range. The standard `encoding/json` rules apply, including unknown-field
 handling. PostgreSQL jsonb constraints also apply, including rejection of unpaired
-surrogate escapes. Invalid payloads return `ErrInvalidInput`; oversized ones also match
+surrogate escapes. Nil interface inputs and typed nil pointers, maps, and slices
+follow these rules and encode as JSON `null`. The plan receives the typed nil
+value. Invalid payloads return `ErrInvalidInput`; oversized ones also match
 `ErrPayloadTooLarge`. Invalid low-level completion output leaves the lease
 unacknowledged; the built-in worker records invalid handler output as task failure.
 
