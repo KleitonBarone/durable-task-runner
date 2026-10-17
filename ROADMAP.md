@@ -1,7 +1,7 @@
 # Roadmap to v1
 
 This is the implementation plan for the first complete release. Milestones 0 and
-1, the milestone 1A verification loop, milestone 1B, and milestone 2A are implemented. Milestone 2B is next.
+1, 1A, 1B, 2A, and 2B are implemented. Milestone 2C is next.
 Every unchecked item below is planned work.
 
 See the [delivery plan](docs/delivery-plan.md) for ordered commits, branches,
@@ -285,26 +285,26 @@ exhaustion queries and process scenarios.
 
 ### Deliverables
 
-- [ ] Persist cancellation with actor/reason before acting on it. Repeated requests
+- [x] Persist cancellation with actor/reason before acting on it. Repeated requests
   are safe. Define terminal-state behavior and serialize cancel, claim, completion,
   and timeout using a consistent database lock order.
-- [ ] A committed request prevents new forward claims. Pending/blocked steps become
+- [x] A committed request prevents new forward claims. Pending/blocked steps become
   cancelled. An in-flight step receives context cancellation on its next control
   check/heartbeat and loses acknowledgement rights under the recorded transition.
-- [ ] Resolve completion races by transaction order. If final completion commits
+- [x] Resolve completion races by transaction order. If final completion commits
   first, the execution stays completed. If cancellation commits first, late success
   cannot resume it. Record the outcome of each active attempt.
-- [ ] Distinguish cancellation requested from cancellation settled. Cancellation
+- [x] Distinguish cancellation requested from cancellation settled. Cancellation
   promises neither that external work stopped nor that side effects were undone.
   Never wait forever for a non-cooperative handler.
-- [ ] Add cancel/query APIs and an example. Integrate deadline expiry with the same
+- [x] Add cancel/query APIs and an example. Integrate deadline expiry with the same
   stopping rules while preserving its distinct reason.
 
 ### Exit gate
 
-- [ ] Test cancellation before claim, during a handler, during retry wait, after
+- [x] Test cancellation before claim, during a handler, during retry wait, after
   completion, repeated requests, and races with claim/completion/expiry.
-- [ ] Cancel a live process execution, restart the worker, and prove no remaining
+- [x] Cancel a live process execution, restart the worker, and prove no remaining
   forward step runs. A non-cooperative handler cannot change fenced engine state.
 
 Suggested PRs: transition ADR and persisted request; worker cooperation and races;
@@ -462,5 +462,5 @@ state-machine ADR, SQL constraints, tests, and user docs together when semantics
 change. Introduce verification before the feature it must verify, then extend it
 at each milestone.
 
-The next action is milestone 2B after the retry/deadline PR merges.
-Cancellation, compensation, upgrades, operations, and release qualification remain.
+The next action is milestone 2C after the cancellation PR merges.
+Compensation, upgrades, operations, and release qualification remain.

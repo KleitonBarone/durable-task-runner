@@ -248,3 +248,41 @@ func TestCancellationRacesExpiredLeaseRecovery(t *testing.T) {
 		t.Fatalf("active leases=%d %v", active, err)
 	}
 }
+
+func TestCancellationRollsBackWhenHistoryCannotPersist(t *testing.T) {
+	engine, definition := newIntegrationEngine(t, NewManualClock(time.Unix(1, 0)), 2)
+	execution, err := Start(t.Context(), engine, definition, integrationInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := engine.ClaimActivity(t.Context(), "worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.pool.Exec(t.Context(), `CREATE FUNCTION reject_cancel_history() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_type='activity.cancelled' THEN RAISE EXCEPTION 'injected history failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_cancel BEFORE INSERT ON execution_history FOR EACH ROW EXECUTE FUNCTION reject_cancel_history()`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Cancel(t.Context(), execution.ID, "operator", "atomic request"); err == nil {
+		t.Fatal("history failure accepted")
+	}
+	result, err := engine.Workflow(t.Context(), execution.ID)
+	if err != nil || result.State != WorkflowRunning || result.CancelRequestedAt != nil {
+		t.Fatalf("partial request: %#v %v", result, err)
+	}
+	attempts, err := engine.Attempts(t.Context(), claim.ActivityID)
+	if err != nil || attempts[0].State != AttemptRunning {
+		t.Fatalf("partial attempt: %#v %v", attempts, err)
+	}
+	if _, err := engine.Heartbeat(t.Context(), claim, time.Minute); err != nil {
+		t.Fatalf("ownership was lost on rollback: %v", err)
+	}
+	events, err := engine.Timeline(t.Context(), execution.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Type == "workflow.cancel_requested" {
+			t.Fatal("request history escaped rollback")
+		}
+	}
+}
