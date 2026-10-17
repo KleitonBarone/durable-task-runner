@@ -247,6 +247,19 @@ Branch: `feat/safe-evolution`. Prerequisite: 2C merged.
 Push each verified commit. The batch gate includes in-progress work, not just
 migration of an empty database.
 
+ADR 0007 is `6ade7de`; version routing and schema guards are `18c967f` in
+[PR #6](https://github.com/KleitonBarone/durable-task-runner/pull/6).
+The closely coupled identity, capability, and migration checks share one commit
+so the public version declaration works safely when introduced. Migration tests
+cover every prior schema, active ownership, retry waits, cancellation, cleanup,
+interrupted DDL, concurrent calls, catalog gaps, unknown files, and checksums.
+`d2dbdb5` gives the reconnect fixture enough time for real database round trips;
+20 repetitions pass. Checkpoints 32 and 34 add five recorded history fixtures,
+the real-process old/new handler crash scenario, and `pg_dump`/`psql` recovery
+into another isolated database. The standalone consumer now also recovers an
+abandoned delivery using only public APIs. Full checks pass in 75.5 seconds and
+race checks pass. Operations and release publication remain planned.
+
 ## Batch 3B. Make deployments diagnosable
 
 Branch: `feat/operations`. Prerequisite: 3A merged.

@@ -32,6 +32,12 @@ func (a *application) verify(ctx context.Context) (result error) {
 	if err := migrate.Run(); err != nil {
 		return err
 	}
+	seed := exec.CommandContext(ctx, executable, "-role", "snapshot")
+	seed.Stderr = os.Stderr
+	seedID, err := seed.Output()
+	if err != nil {
+		return err
+	}
 	var children []*childProcess
 	defer func() {
 		for _, child := range children {
@@ -60,6 +66,9 @@ func (a *application) verify(ctx context.Context) (result error) {
 		child := &childProcess{role: role, stdin: stdin, done: make(chan error, 1)}
 		children = append(children, child)
 		go func() { child.done <- cmd.Wait() }()
+	}
+	if err := a.assertRecovered(ctx, strings.TrimSpace(string(seedID)), children); err != nil {
+		return err
 	}
 	key := fmt.Sprintf("consumer-%d-%d", os.Getpid(), time.Now().UnixNano())
 	start := exec.CommandContext(ctx, executable, "-role", "start", "-key", key)
@@ -100,7 +109,7 @@ func (a *application) verify(ctx context.Context) (result error) {
 	if effects != 2 {
 		return fmt.Errorf("fake effects = %d, want 2", effects)
 	}
-	fmt.Println("external consumer: separate worker/scheduler, keyed start, prior result, final result and attempts passed")
+	fmt.Println("external consumer: separate worker/scheduler, abandoned owner recovery, deduplicated effects, keyed start, prior result, final result and attempts passed")
 	status := exec.CommandContext(ctx, executable, "-role", "status", "-id", execution.ID)
 	status.Stdout, status.Stderr = os.Stdout, os.Stderr
 	return status.Run()

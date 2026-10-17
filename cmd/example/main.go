@@ -32,7 +32,7 @@ func main() {
 }
 
 func run() error {
-	role := flag.String("role", "demo", "demo, migrate, start, status, worker, scheduler, or verify")
+	role := flag.String("role", "demo", "demo, migrate, start, status, worker, scheduler, verify, snapshot, or restore-verify")
 	id := flag.String("id", "", "workflow ID for status")
 	key := flag.String("key", "welcome/account-42", "caller start key")
 	stdinShutdown := flag.Bool("stdin-shutdown", false, "stop a child runtime when stdin closes")
@@ -42,7 +42,7 @@ func run() error {
 	if *stdinShutdown {
 		go func() { _, _ = io.Copy(io.Discard, os.Stdin); stop() }()
 	}
-	if *role == "demo" || *role == "verify" {
+	if *role == "demo" || *role == "verify" || *role == "snapshot" || *role == "restore-verify" {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
@@ -124,6 +124,13 @@ func run() error {
 			return err
 		}
 		return app.verify(ctx)
+	case "snapshot":
+		return app.snapshot(ctx)
+	case "restore-verify":
+		if *id == "" {
+			return errors.New("restore-verify requires -id")
+		}
+		return app.verifyRestored(ctx, *id)
 	default:
 		return fmt.Errorf("unknown role %q", *role)
 	}

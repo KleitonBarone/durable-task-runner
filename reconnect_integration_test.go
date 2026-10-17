@@ -44,7 +44,9 @@ func TestWorkerReconnectsAfterTransientConnectionFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker, err := NewWorker(runtimeEngine, WorkerConfig{ID: "reconnect", DatabaseTimeout: 50 * time.Millisecond}, Handle("step_1", func(_ context.Context, input integrationInput) (string, error) { return input.Value, nil }))
+	// This verifies reconnect behavior, not connection/claim latency. Leave room
+	// for the real PostgreSQL round trips when other verification work is active.
+	worker, err := NewWorker(runtimeEngine, WorkerConfig{ID: "reconnect", DatabaseTimeout: 500 * time.Millisecond}, Handle("step_1", func(_ context.Context, input integrationInput) (string, error) { return input.Value, nil }))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,8 +72,10 @@ func TestWorkerReconnectsAfterTransientConnectionFailure(t *testing.T) {
 			break
 		}
 		select {
+		case err := <-done:
+			t.Fatalf("worker exited during reconnect: %v; health=%#v", err, worker.Health())
 		case <-ctx.Done():
-			t.Fatal("worker did not reconnect")
+			t.Fatalf("worker did not reconnect: %#v", worker.Health())
 		case <-deadline.C:
 		}
 	}

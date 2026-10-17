@@ -18,6 +18,7 @@ var (
 	ErrWorkerBusy          = errors.New("worker instance is already running")
 	ErrHandlerUnresponsive = errors.New("activity handler did not stop within shutdown grace period")
 	ErrExecutionDeadline   = errors.New("execution deadline exceeded")
+	ErrIncompatibleSchema  = errors.New("database schema is incompatible with this binary")
 )
 
 // HandlerPanicError records an abnormal handler exit as a task failure. Panics

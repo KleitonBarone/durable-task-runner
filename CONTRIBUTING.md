@@ -1,7 +1,6 @@
 # Development
 
-Milestones 0, 1, 1A, and 1B are implemented.
-[ROADMAP.md](ROADMAP.md) defines the remaining behavior and its acceptance gates.
+[ROADMAP.md](ROADMAP.md) records implemented behavior and remaining acceptance gates.
 
 ## Start with one command
 
@@ -14,6 +13,8 @@ go run ./cmd/dev check
 This checks formatting, runs static analysis for unit/integration/process code,
 runs uncached unit and PostgreSQL tests, exercises real process recovery, and runs
 the example and a standalone consumer with separate worker/scheduler processes.
+It also dumps and restores a snapshot into a second isolated PostgreSQL instance
+and finishes its unacknowledged activity with application deduplication.
 It provisions its own PostgreSQL 17 container with an available
 loopback port and temporary data, then removes that container on success or failure.
 It does not use the named development database or a configured application URL.
@@ -89,6 +90,8 @@ Each test owns a unique schema and drops only that schema.
 ```sh
 go run ./cmd/dev e2e
 go run ./cmd/dev e2e -run TestProcessCrashRecovery -count=3 .
+go run ./cmd/dev e2e -run TestProcessHandlerUpgradePreservesOldExecution .
+go run ./cmd/dev restore
 go run ./cmd/dev race
 ```
 
@@ -108,6 +111,13 @@ expiry/heartbeat boundaries belong to manual-clock tests, not timing sleeps.
 uses a disposable `golang:1.24-bookworm` container with read-only source and Go
 module cache mounts, so a Windows C compiler is unnecessary. Host Go downloads and
 verifies dependencies first. All test effects are local deterministic fakes.
+
+History fixtures live in `testdata/history`. Their recorded events are interpreted
+without invoking workflow code. To update them after reviewing an intentional
+compatibility change, set `DURABLE_UPDATE_HISTORY_FIXTURES=1` and run
+`go run ./cmd/dev e2e '-tags=integration' '-run=TestRecordedHistoriesMatchExecutionState' .`.
+Inspect every fixture diff, then clear the variable. Ordinary checks never rewrite
+fixtures. Timestamps use UTC so fixtures are independent of the host time zone.
 
 For the milestone 1A stress gate, this combines selected database and process cases
 in one isolated run. Quoting the complete flags works in both shells:
@@ -164,6 +174,11 @@ time. CI provides independent clean-run timing for both supported Go versions.
 
 After milestone 1B, the same Windows full check took 39.2 seconds, including the
 additional deduplication crash case and standalone consumer processes.
+
+After milestone 3A, a warm Windows/WSL full check took 75.5 seconds, including the
+separate consumer's abandoned-owner recovery and two-database snapshot rehearsal.
+The Linux race suite's root-package tests took 15.0 seconds. These are local
+verification timings, not runtime throughput measurements.
 
 ## Verify integration from another module
 

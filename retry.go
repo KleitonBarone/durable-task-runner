@@ -35,6 +35,18 @@ func WithAttemptTimeout(timeout time.Duration) StepOption { return StepOption{ti
 func WithCompensation(cleanup ActivitySpec) StepOption { return StepOption{compensation: &cleanup} }
 
 func normalizeActivity(spec *ActivitySpec, options []StepOption) error {
+	if spec.Version == "" {
+		spec.Version = defaultVersion
+	}
+	if spec.InputSchema == "" {
+		spec.InputSchema = legacySchema
+	}
+	if spec.OutputSchema == "" {
+		spec.OutputSchema = legacySchema
+	}
+	if err := (capability{spec.Name, spec.Version, spec.contract, spec.InputSchema, spec.OutputSchema}).validate(); err != nil {
+		return err
+	}
 	retrySet, timeoutSet, compensationSet := false, false, false
 	for _, option := range options {
 		switch {
@@ -61,7 +73,7 @@ func normalizeActivity(spec *ActivitySpec, options []StepOption) error {
 			if err := normalizeActivity(&cleanup, nil); err != nil {
 				return err
 			}
-			spec.compensation = &CompensationPlan{Name: cleanup.Name, Contract: cleanup.contract, Input: append([]byte(nil), cleanup.Input...), RetryPolicy: cleanup.policy, AttemptTimeout: cleanup.attemptTimeout}
+			spec.compensation = &CompensationPlan{Name: cleanup.Name, Version: cleanup.Version, InputSchema: cleanup.InputSchema, OutputSchema: cleanup.OutputSchema, Contract: cleanup.contract, Input: append([]byte(nil), cleanup.Input...), RetryPolicy: cleanup.policy, AttemptTimeout: cleanup.attemptTimeout}
 			compensationSet = true
 		default:
 			return fmt.Errorf("%w: duplicate or invalid step option", ErrInvalidInput)

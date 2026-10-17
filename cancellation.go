@@ -17,7 +17,7 @@ func (e *Engine) Cancel(ctx context.Context, id, actor, reason string) (Workflow
 	if strings.TrimSpace(actor) == "" || len(actor) > 200 || len(reason) > 16*1024 || !utf8.ValidString(actor) || !utf8.ValidString(reason) || strings.ContainsRune(actor, 0) || strings.ContainsRune(reason, 0) {
 		return WorkflowExecution{}, fmt.Errorf("%w: cancellation requires a UTF-8 actor of 1-200 bytes and reason up to 16 KiB, without NUL", ErrInvalidInput)
 	}
-	tx, err := e.pool.Begin(ctx)
+	tx, err := e.beginExecution(ctx)
 	if err != nil {
 		return WorkflowExecution{}, err
 	}

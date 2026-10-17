@@ -239,8 +239,8 @@ reusing the old key returns its original terminal execution. Use
 [cancellation behavior](cancellation.md) for settlement, races, and handler cooperation.
 Declare optional cleanup with `WithCompensation(cleanupStep)` on a forward step.
 See [compensation behavior](compensation.md) for reverse order, independent limits,
-and ambiguous effects. Definition versioning remains planned. Preserve the
-meaning of registered workflow and activity names until their executions finish.
+and ambiguous effects. Use explicit immutable versions for incompatible changes.
+See [upgrades](upgrades.md) for handler coexistence, draining, and schema checks.
 
 See [ADR 0002](decisions/0002-state-machine-and-failure-model.md) for transitions,
 invariants, and the side-effect/acknowledgement failure window, and

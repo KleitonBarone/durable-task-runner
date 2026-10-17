@@ -40,6 +40,9 @@ const (
 // activity. Cleanup handlers can also read committed forward step results.
 type CompensationPlan struct {
 	Name           string          `json:"name"`
+	Version        string          `json:"version"`
+	InputSchema    string          `json:"input_schema"`
+	OutputSchema   string          `json:"output_schema"`
 	Contract       string          `json:"contract"`
 	Input          json.RawMessage `json:"input"`
 	RetryPolicy    RetryPolicy     `json:"retry_policy"`
@@ -77,6 +80,8 @@ const (
 )
 
 type WorkflowExecution struct {
+	DefinitionVersion      string
+	InputSchema            string
 	ID                     string
 	DefinitionName         string
 	StartKey               *string
@@ -103,6 +108,9 @@ type WorkflowExecution struct {
 }
 
 type Activity struct {
+	Version               string
+	InputSchema           string
+	OutputSchema          string
 	Kind                  ActivityKind
 	CompensatesActivityID *string
 	Compensation          *CompensationPlan
@@ -152,6 +160,9 @@ type Lease struct {
 }
 
 type Claim struct {
+	ActivityVersion       string
+	InputSchema           string
+	OutputSchema          string
 	Kind                  ActivityKind
 	CompensatesActivityID *string
 	WorkflowID            string
