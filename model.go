@@ -11,6 +11,7 @@ const (
 	WorkflowRunning   WorkflowState = "running"
 	WorkflowCompleted WorkflowState = "completed"
 	WorkflowFailed    WorkflowState = "failed"
+	WorkflowTimedOut  WorkflowState = "timed_out"
 )
 
 type ActivityState string
@@ -22,6 +23,7 @@ const (
 	ActivityWaiting   ActivityState = "retry_wait"
 	ActivityCompleted ActivityState = "completed"
 	ActivityFailed    ActivityState = "failed"
+	ActivityTimedOut  ActivityState = "timed_out"
 )
 
 type AttemptState string
@@ -31,6 +33,7 @@ const (
 	AttemptCompleted AttemptState = "completed"
 	AttemptFailed    AttemptState = "failed"
 	AttemptAbandoned AttemptState = "abandoned"
+	AttemptTimedOut  AttemptState = "timed_out"
 )
 
 type LeaseState string
@@ -53,6 +56,8 @@ type WorkflowExecution struct {
 	CompletedAt    *time.Time
 	TerminalReason string
 	LastError      string
+	DeadlineAt     time.Time
+	Timeout        time.Duration
 }
 
 type Activity struct {
@@ -85,6 +90,7 @@ type Attempt struct {
 	EndedAt       *time.Time
 	RetryDecision string
 	RetryDueAt    *time.Time
+	DeadlineAt    time.Time
 }
 
 type Lease struct {
@@ -101,18 +107,20 @@ type Lease struct {
 }
 
 type Claim struct {
-	WorkflowID     string
-	ActivityID     string
-	ActivityName   string
-	StepKey        string
-	Position       int
-	ActivityInput  json.RawMessage
-	AttemptID      string
-	AttemptNumber  int
-	LeaseID        string
-	LeaseToken     string
-	WorkerID       string
-	LeaseExpiresAt time.Time
+	WorkflowID      string
+	ActivityID      string
+	ActivityName    string
+	StepKey         string
+	Position        int
+	ActivityInput   json.RawMessage
+	AttemptID       string
+	AttemptNumber   int
+	LeaseID         string
+	LeaseToken      string
+	WorkerID        string
+	LeaseExpiresAt  time.Time
+	ClaimedAt       time.Time
+	AttemptDeadline time.Time
 }
 
 type TimelineEvent struct {

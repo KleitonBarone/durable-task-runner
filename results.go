@@ -80,7 +80,7 @@ func (e *Engine) Attempts(ctx context.Context, activityID string) ([]Attempt, er
 	if !exists {
 		return nil, ErrNotFound
 	}
-	rows, err := e.pool.Query(ctx, `SELECT id, activity_id, number, worker_id, state, COALESCE(error_text, ''), started_at, ended_at, retry_decision, retry_due_at FROM attempts WHERE activity_id = $1 ORDER BY number`, activityID)
+	rows, err := e.pool.Query(ctx, `SELECT id, activity_id, number, worker_id, state, COALESCE(error_text, ''), started_at, ended_at, retry_decision, retry_due_at, deadline_at FROM attempts WHERE activity_id = $1 ORDER BY number`, activityID)
 	if err != nil {
 		return nil, fmt.Errorf("read attempts: %w", err)
 	}
@@ -88,7 +88,7 @@ func (e *Engine) Attempts(ctx context.Context, activityID string) ([]Attempt, er
 	var attempts []Attempt
 	for rows.Next() {
 		var attempt Attempt
-		if err := rows.Scan(&attempt.ID, &attempt.ActivityID, &attempt.Number, &attempt.WorkerID, &attempt.State, &attempt.Error, &attempt.StartedAt, &attempt.EndedAt, &attempt.RetryDecision, &attempt.RetryDueAt); err != nil {
+		if err := rows.Scan(&attempt.ID, &attempt.ActivityID, &attempt.Number, &attempt.WorkerID, &attempt.State, &attempt.Error, &attempt.StartedAt, &attempt.EndedAt, &attempt.RetryDecision, &attempt.RetryDueAt, &attempt.DeadlineAt); err != nil {
 			return nil, fmt.Errorf("scan attempt: %w", err)
 		}
 		attempts = append(attempts, attempt)

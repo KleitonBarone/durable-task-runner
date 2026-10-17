@@ -67,10 +67,11 @@ func (e *Engine) Migrate(ctx context.Context) error {
 }
 
 func (e *Engine) start(ctx context.Context, definitionName string, input any, options ...StartOption) (WorkflowExecution, error) {
-	key, err := startKey(options)
+	config, err := parseStartOptions(options)
 	if err != nil {
 		return WorkflowExecution{}, err
 	}
+	key := config.key
 	definition, ok := e.registry.lookup(definitionName)
 	if !ok {
 		return WorkflowExecution{}, fmt.Errorf("%w: %q", ErrUnknownWorkflow, definitionName)
@@ -111,12 +112,14 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any, op
 		return WorkflowExecution{}, err
 	}
 	execution := WorkflowExecution{ID: workflowID, DefinitionName: definitionName, StartKey: key, Input: encodedInput, State: WorkflowRunning, CreatedAt: now, UpdatedAt: now}
+	execution.Timeout = config.timeout
+	execution.DeadlineAt = now.Add(config.timeout)
 
 	inserted, err := tx.Exec(ctx, `
-		INSERT INTO workflow_executions (id, definition_name, input, state, created_at, updated_at, start_key)
-		VALUES ($1, $2, $3, $4, $5, $5, $6)
+		INSERT INTO workflow_executions (id, definition_name, input, state, created_at, updated_at, start_key, timeout_ns, deadline_at)
+		VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8)
 		ON CONFLICT (definition_name, start_key) DO NOTHING`,
-		workflowID, definitionName, encodedInput, WorkflowRunning, now, key)
+		workflowID, definitionName, encodedInput, WorkflowRunning, now, key, config.timeout, execution.DeadlineAt)
 	if err != nil {
 		return WorkflowExecution{}, fmt.Errorf("persist workflow: %w", payloadDatabaseError(err))
 	}
@@ -184,6 +187,7 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 	var claim Claim
 	var currentState ActivityState
 	var policy RetryPolicy
+	var attemptTimeout time.Duration
 	names, contracts := capabilityArrays(capabilities)
 	err = tx.QueryRow(ctx, `
 		SELECT a.id, a.workflow_id, a.name, a.input, a.attempt_count, a.state, a.step_key, a.position
@@ -203,7 +207,7 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 	if err != nil {
 		return Claim{}, fmt.Errorf("select activity to claim: %w", err)
 	}
-	if err := tx.QueryRow(ctx, `SELECT state, attempt_count, retry_policy FROM activities WHERE id=$1 FOR UPDATE`, claim.ActivityID).Scan(&currentState, &claim.AttemptNumber, &policy); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT state, attempt_count, retry_policy, attempt_timeout_ns FROM activities WHERE id=$1 FOR UPDATE`, claim.ActivityID).Scan(&currentState, &claim.AttemptNumber, &policy, &attemptTimeout); err != nil {
 		return Claim{}, err
 	}
 	if currentState != ActivityReady {
@@ -212,6 +216,19 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 	now, err := e.now(ctx, tx)
 	if err != nil {
 		return Claim{}, err
+	}
+	var workflowDeadline time.Time
+	if err := tx.QueryRow(ctx, `SELECT deadline_at FROM workflow_executions WHERE id=$1`, claim.WorkflowID).Scan(&workflowDeadline); err != nil {
+		return Claim{}, err
+	}
+	if !workflowDeadline.After(now) {
+		if err := e.timeoutWorkflow(ctx, tx, claim.WorkflowID, "workflow_deadline", now); err != nil {
+			return Claim{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Claim{}, err
+		}
+		return Claim{}, ErrNoActivity
 	}
 	if claim.AttemptNumber >= policy.MaxAttempts {
 		if _, err := tx.Exec(ctx, `UPDATE activities SET state='failed',updated_at=$2,completed_at=$2,last_error='claim budget exhausted' WHERE id=$1`, claim.ActivityID, now); err != nil {
@@ -246,7 +263,9 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 		return Claim{}, err
 	}
 	claim.WorkerID = workerID
-	claim.LeaseExpiresAt = now.Add(leaseDuration)
+	claim.ClaimedAt = now
+	claim.AttemptDeadline = minTime(now.Add(attemptTimeout), workflowDeadline)
+	claim.LeaseExpiresAt = minTime(now.Add(leaseDuration), claim.AttemptDeadline)
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE activities SET state = $2, attempt_count = $3, updated_at = $4 WHERE id = $1`,
@@ -254,9 +273,9 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 		return Claim{}, fmt.Errorf("mark activity running: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO attempts (id, activity_id, number, worker_id, state, started_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		claim.AttemptID, claim.ActivityID, claim.AttemptNumber, workerID, AttemptRunning, now); err != nil {
+		INSERT INTO attempts (id, activity_id, number, worker_id, state, started_at, deadline_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		claim.AttemptID, claim.ActivityID, claim.AttemptNumber, workerID, AttemptRunning, now, claim.AttemptDeadline); err != nil {
 		return Claim{}, fmt.Errorf("persist attempt: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -285,7 +304,7 @@ func (e *Engine) Heartbeat(ctx context.Context, claim Claim, extension time.Dura
 		return time.Time{}, fmt.Errorf("begin heartbeat: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	_, state, err := lockOwnershipWorkflow(ctx, tx, claim.LeaseToken)
+	workflowID, state, err := lockOwnershipWorkflow(ctx, tx, claim.LeaseToken)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -299,15 +318,24 @@ func (e *Engine) Heartbeat(ctx context.Context, claim Claim, extension time.Dura
 	if err != nil {
 		return time.Time{}, err
 	}
+	if settled, err := e.settleDeadline(ctx, tx, workflowID, claim.LeaseToken, now); err != nil {
+		return time.Time{}, err
+	} else if settled {
+		if err := tx.Commit(ctx); err != nil {
+			return time.Time{}, err
+		}
+		return time.Time{}, errors.Join(ErrLeaseLost, ErrExecutionDeadline)
+	}
 	requestedExpiry := now.Add(extension)
 	var expiresAt time.Time
 	err = tx.QueryRow(ctx, `
 		UPDATE leases l
-		SET heartbeat_at = $2, expires_at = GREATEST(l.expires_at, $3)
-		FROM activities a, attempts at
+		SET heartbeat_at = $2, expires_at = LEAST(GREATEST(l.expires_at, $3),at.deadline_at,w.deadline_at)
+		FROM activities a, attempts at, workflow_executions w
 		WHERE l.token = $1
 		  AND l.activity_id = a.id
 		  AND l.attempt_id = at.id
+		  AND a.workflow_id = w.id
 		  AND l.state = 'active'
 		  AND a.state = 'running'
 		  AND at.state = 'running'
@@ -381,6 +409,14 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 	now, err := e.now(ctx, tx)
 	if err != nil {
 		return err
+	}
+	if settled, err := e.settleDeadline(ctx, tx, workflowID, claim.LeaseToken, now); err != nil {
+		return err
+	} else if settled {
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		return errors.Join(ErrLeaseLost, ErrExecutionDeadline)
 	}
 	if activityState != ActivityRunning || attemptState != AttemptRunning || leaseState != LeaseActive || !expiresAt.After(now) {
 		return ErrLeaseLost

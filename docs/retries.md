@@ -35,4 +35,24 @@ This is a prerelease change from milestone 1's unlimited abandoned redelivery.
 Migration 005 gives existing activities the same finite default. Keep handlers
 idempotent: a failed or abandoned attempt may already have performed its effect.
 
-Attempt/workflow deadline enforcement is the next checkpoint in milestone 2A.
+## Execution limits
+
+Each attempt defaults to five minutes; workflows default to 24 hours overall.
+Use `durable.WithAttemptTimeout(30*time.Second)` on a step and
+`durable.WithWorkflowTimeout(time.Hour)` on `Start` to choose positive limits.
+The database stores absolute deadlines. Heartbeats cannot extend ownership beyond
+either one. Production ownership decisions use PostgreSQL time sampled under
+workflow/ownership locks; injected clocks control exact boundaries in tests.
+
+At equality with a deadline, completion is fenced. Timeout closes active attempts
+as `timed_out`, expires leases, and prevents forward scheduling. An attempt timeout
+can retry only under the opted-in error policy and remaining budget. An overall
+deadline always stops forward work. Terminal status is `timed_out`, with a reason
+distinguishing the workflow deadline, attempt deadline, or exhausted claim budget.
+Queries expose workflow and attempt deadlines. Handler metadata includes its
+attempt deadline.
+
+Workers cancel handler contexts on deadline, even when heartbeats are healthy.
+Handlers must cooperate and bound their own external calls. A timed-out external
+effect may still finish; engine fencing cannot undo it. Non-cooperative handlers
+stop reuse of that worker instance after its shutdown grace period.

@@ -17,6 +17,7 @@ var (
 	ErrStartConflict       = errors.New("start key already used with different input")
 	ErrWorkerBusy          = errors.New("worker instance is already running")
 	ErrHandlerUnresponsive = errors.New("activity handler did not stop within shutdown grace period")
+	ErrExecutionDeadline   = errors.New("execution deadline exceeded")
 )
 
 // HandlerPanicError records an abnormal handler exit as a task failure. Panics

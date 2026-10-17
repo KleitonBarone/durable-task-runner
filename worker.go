@@ -150,6 +150,8 @@ func (w *Worker) runOnce(ctx context.Context) (bool, error) {
 
 	ticker := newTicker(w.engine.clock, w.config.HeartbeatInterval)
 	defer ticker.Stop()
+	deadline := newTicker(w.engine.clock, claim.AttemptDeadline.Sub(claim.ClaimedAt))
+	defer deadline.Stop()
 	stopHandler := func(cause error) error {
 		cancel()
 		grace := newTicker(w.engine.clock, w.config.ShutdownGracePeriod)
@@ -191,6 +193,14 @@ func (w *Worker) runOnce(ctx context.Context) (bool, error) {
 			}
 			if w.loopActive.Load() {
 				w.health.observe(w.engine.clock, nil, 0)
+			}
+		case <-deadline.Ticks():
+			cancel()
+			controlCtx, cancelControl := context.WithTimeout(ctx, w.config.DatabaseTimeout)
+			_, err := w.engine.Heartbeat(controlCtx, claim, w.config.LeaseDuration)
+			cancelControl()
+			if err != nil {
+				return true, stopHandler(err)
 			}
 		}
 	}

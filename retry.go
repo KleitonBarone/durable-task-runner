@@ -124,7 +124,7 @@ func (e *Engine) recordAttemptFailure(ctx context.Context, tx pgx.Tx, d delivery
 		due = &at
 	}
 	leaseState := LeaseReleased
-	if state == AttemptAbandoned {
+	if state == AttemptAbandoned || state == AttemptTimedOut {
 		leaseState = LeaseExpired
 	}
 	if err := ValidateAttemptTransition(AttemptRunning, state); err != nil {
@@ -138,6 +138,11 @@ func (e *Engine) recordAttemptFailure(ctx context.Context, tx pgx.Tx, d delivery
 	}
 	if state == AttemptAbandoned {
 		if err := appendHistory(ctx, tx, d.workflowID, &d.activityID, &d.attemptID, "attempt.abandoned", map[string]any{"reason": message}, now); err != nil {
+			return err
+		}
+	}
+	if state == AttemptTimedOut {
+		if err := appendHistory(ctx, tx, d.workflowID, &d.activityID, &d.attemptID, "attempt.timed_out", map[string]any{"reason": message}, now); err != nil {
 			return err
 		}
 	}
@@ -168,11 +173,21 @@ func (e *Engine) recordAttemptFailure(ctx context.Context, tx pgx.Tx, d delivery
 	if decision == "exhausted" {
 		reason = "attempt_budget_exhausted"
 	}
-	if _, err := tx.Exec(ctx, `UPDATE activities SET state='failed',last_error=$2,updated_at=$3,completed_at=$3 WHERE id=$1`, d.activityID, message, now); err != nil {
+	activityState, event := ActivityFailed, "activity.failed"
+	if state == AttemptTimedOut {
+		activityState, event = ActivityTimedOut, "activity.timed_out"
+		if decision != "exhausted" {
+			reason = "attempt_deadline"
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE activities SET state=$4,last_error=$2,updated_at=$3,completed_at=$3 WHERE id=$1`, d.activityID, message, now, activityState); err != nil {
 		return err
 	}
-	if err := appendHistory(ctx, tx, d.workflowID, &d.activityID, &d.attemptID, "activity.failed", map[string]any{"error": message, "reason": reason}, now); err != nil {
+	if err := appendHistory(ctx, tx, d.workflowID, &d.activityID, &d.attemptID, event, map[string]any{"error": message, "reason": reason}, now); err != nil {
 		return err
+	}
+	if state == AttemptTimedOut {
+		return e.timeoutWorkflow(ctx, tx, d.workflowID, reason, now)
 	}
 	return failWorkflow(ctx, tx, d.workflowID, reason, message, now)
 }
