@@ -114,12 +114,13 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any, op
 	execution := WorkflowExecution{ID: workflowID, DefinitionName: definitionName, StartKey: key, Input: encodedInput, State: WorkflowRunning, CreatedAt: now, UpdatedAt: now}
 	execution.Timeout = config.timeout
 	execution.DeadlineAt = now.Add(config.timeout)
+	execution.PreviousExecutionID = config.previous
 
 	inserted, err := tx.Exec(ctx, `
-		INSERT INTO workflow_executions (id, definition_name, input, state, created_at, updated_at, start_key, timeout_ns, deadline_at)
-		VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8)
+		INSERT INTO workflow_executions (id, definition_name, input, state, created_at, updated_at, start_key, timeout_ns, deadline_at, previous_execution_id)
+		VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9)
 		ON CONFLICT (definition_name, start_key) DO NOTHING`,
-		workflowID, definitionName, encodedInput, WorkflowRunning, now, key, config.timeout, execution.DeadlineAt)
+		workflowID, definitionName, encodedInput, WorkflowRunning, now, key, config.timeout, execution.DeadlineAt, config.previous)
 	if err != nil {
 		return WorkflowExecution{}, fmt.Errorf("persist workflow: %w", payloadDatabaseError(err))
 	}
@@ -137,8 +138,19 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any, op
 		}
 		return e.Workflow(ctx, existingID)
 	}
+	if config.previous != nil {
+		var state WorkflowState
+		if err := tx.QueryRow(ctx, `SELECT state FROM workflow_executions WHERE id=$1`, config.previous).Scan(&state); errors.Is(err, pgx.ErrNoRows) {
+			return WorkflowExecution{}, ErrNotFound
+		} else if err != nil {
+			return WorkflowExecution{}, err
+		}
+		if state != WorkflowCompleted && state != WorkflowFailed && state != WorkflowTimedOut {
+			return WorkflowExecution{}, fmt.Errorf("%w: predecessor must be terminal", ErrInvalidInput)
+		}
+	}
 	if err := appendHistory(ctx, tx, workflowID, nil, nil, "workflow.started", map[string]any{
-		"definition": definitionName,
+		"definition": definitionName, "previous_execution_id": config.previous, "deadline_at": execution.DeadlineAt,
 	}, now); err != nil {
 		return WorkflowExecution{}, err
 	}

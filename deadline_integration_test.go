@@ -72,6 +72,40 @@ func TestWorkflowDeadlineStopsUnclaimedWork(t *testing.T) {
 	}
 }
 
+func TestReconciliationLinksNewExecutionWithoutReopeningOld(t *testing.T) {
+	engine, clock, old := deadlineExecution(t, time.Second, WithWorkflowTimeout(time.Second))
+	definition := Define("reconcile", func(input string) ([]ActivitySpec, error) {
+		step, err := NewActivity("effect", input)
+		return []ActivitySpec{step}, err
+	})
+	if err := Register(engine.registry, definition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Start(t.Context(), engine, definition, "fix", WithPredecessor(old.ID)); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("active predecessor: %v", err)
+	}
+	clock.Advance(time.Second)
+	if _, err := engine.RecoverAbandoned(t.Context(), 10); err != nil {
+		t.Fatal(err)
+	}
+	next, err := Start(t.Context(), engine, definition, "fix", WithPredecessor(old.ID), WithStartKey("reconcile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := engine.Workflow(t.Context(), next.ID)
+	if err != nil || stored.PreviousExecutionID == nil || *stored.PreviousExecutionID != old.ID {
+		t.Fatalf("link: %#v %v", stored, err)
+	}
+	previous, err := engine.Workflow(t.Context(), old.ID)
+	if err != nil || previous.State != WorkflowTimedOut {
+		t.Fatalf("predecessor: %#v %v", previous, err)
+	}
+	duplicate, err := Start(t.Context(), engine, definition, "fix", WithStartKey("reconcile"))
+	if err != nil || duplicate.ID != next.ID {
+		t.Fatalf("duplicate: %#v %v", duplicate, err)
+	}
+}
+
 func TestCompletionRacingTimeoutCannotReopenExecution(t *testing.T) {
 	engine, clock, execution := deadlineExecution(t, time.Second)
 	claim, err := engine.ClaimActivity(t.Context(), "worker", time.Minute)

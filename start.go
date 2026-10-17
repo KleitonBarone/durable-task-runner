@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 	"unicode/utf8"
 )
 
 type StartOption struct {
 	kind, key string
 	timeout   time.Duration
+	previous  string
 }
 
 // WithStartKey deduplicates starts within a workflow definition name and database.
@@ -21,9 +24,14 @@ func WithWorkflowTimeout(timeout time.Duration) StartOption {
 	return StartOption{kind: "timeout", timeout: timeout}
 }
 
+// WithPredecessor links a new reconciliation execution to a terminal execution.
+// The identifier remains recorded if retention later removes the predecessor.
+func WithPredecessor(id string) StartOption { return StartOption{kind: "predecessor", previous: id} }
+
 type startConfig struct {
-	key     *string
-	timeout time.Duration
+	key      *string
+	timeout  time.Duration
+	previous *string
 }
 
 func parseStartOptions(options []StartOption) (startConfig, error) {
@@ -43,6 +51,13 @@ func parseStartOptions(options []StartOption) (startConfig, error) {
 			}
 			config.timeout = option.timeout
 			timeoutSet = true
+		case option.kind == "predecessor" && config.previous == nil:
+			var id pgtype.UUID
+			if err := id.Scan(option.previous); err != nil || !id.Valid {
+				return config, fmt.Errorf("%w: invalid predecessor ID", ErrInvalidInput)
+			}
+			previous := option.previous
+			config.previous = &previous
 		default:
 			return config, fmt.Errorf("%w: duplicate or invalid start option", ErrInvalidInput)
 		}

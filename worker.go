@@ -195,7 +195,9 @@ func (w *Worker) runOnce(ctx context.Context) (bool, error) {
 				w.health.observe(w.engine.clock, nil, 0)
 			}
 		case <-deadline.Ticks():
-			cancel()
+			// Local timers can run ahead of the database clock. Confirm the
+			// durable deadline before cancelling; otherwise a cooperative
+			// handler's context error could be recorded as an ordinary failure.
 			controlCtx, cancelControl := context.WithTimeout(ctx, w.config.DatabaseTimeout)
 			_, err := w.engine.Heartbeat(controlCtx, claim, w.config.LeaseDuration)
 			cancelControl()

@@ -45,19 +45,20 @@ const (
 )
 
 type WorkflowExecution struct {
-	ID             string
-	DefinitionName string
-	StartKey       *string
-	Input          json.RawMessage
-	Output         json.RawMessage
-	State          WorkflowState
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	CompletedAt    *time.Time
-	TerminalReason string
-	LastError      string
-	DeadlineAt     time.Time
-	Timeout        time.Duration
+	ID                  string
+	DefinitionName      string
+	StartKey            *string
+	Input               json.RawMessage
+	Output              json.RawMessage
+	State               WorkflowState
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	CompletedAt         *time.Time
+	TerminalReason      string
+	LastError           string
+	DeadlineAt          time.Time
+	Timeout             time.Duration
+	PreviousExecutionID *string
 }
 
 type Activity struct {
