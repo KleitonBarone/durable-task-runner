@@ -1,7 +1,9 @@
 # Integrating the current engine
 
-This guide describes implemented behavior. Planned APIs and release gates live in
-[ROADMAP.md](../ROADMAP.md). See the [v1 compatibility policy](../SUPPORT.md).
+This guide describes the current checkout. Unreleased behavior is marked below;
+see the [changelog](../CHANGELOG.md#unreleased) for changes since v1.0.0.
+[ROADMAP.md](../ROADMAP.md) records scope and release gates. See the
+[v1 compatibility policy](../SUPPORT.md).
 
 ## Start with a working program
 
@@ -83,7 +85,14 @@ Each workflow input, step input, and output has a 1 MiB encoded JSON limit.
 Payloads must be valid UTF-8 JSON without NUL strings or numbers outside float64
 decoding range. The standard `encoding/json` rules apply, including unknown-field
 handling. PostgreSQL jsonb constraints also apply, including rejection of unpaired
-surrogate escapes. Invalid payloads return `ErrInvalidInput`; oversized ones also match
+surrogate escapes. Typed nil pointers, maps, and slices encode as JSON `null`;
+the plan receives the typed nil value.
+
+Nil interface workflow input support is unreleased. The current checkout accepts
+these inputs as JSON `null`; the v1.0.0 installation above rejects them with
+`ErrInvalidInput`.
+
+Invalid payloads return `ErrInvalidInput`; oversized ones also match
 `ErrPayloadTooLarge`. Invalid low-level completion output leaves the lease
 unacknowledged; the built-in worker records invalid handler output as task failure.
 
@@ -257,6 +266,6 @@ execution details and history. Reusing a purged start key returns
 `ExecutionExpiredError`, with its original ID, instead of starting new work.
 Conflicting input still returns `ErrStartConflict`.
 
-See [ADR 0002](decisions/0002-state-machine-and-failure-model.md) for transitions,
-invariants, and the side-effect/acknowledgement failure window, and
-[ADR 0003](decisions/0003-public-integration-contract.md) for API guarantees.
+See the [current execution states](state-machine.md) for transitions and the
+side-effect/acknowledgement failure window. [ADR 0003](decisions/0003-public-integration-contract.md)
+records the original integration contract and links to later decisions.

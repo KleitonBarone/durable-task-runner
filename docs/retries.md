@@ -52,6 +52,12 @@ distinguishing the workflow deadline, attempt deadline, or exhausted claim budge
 Queries expose workflow and attempt deadlines. Handler metadata includes its
 attempt deadline.
 
+Recovery classifies an expired delivery by the first limit reached. A lease that
+expired before its attempt deadline remains abandonment even if the scheduler
+returns after that deadline. If both timestamps are equal, the attempt timed out.
+The current workflow or cleanup deadline still takes precedence and stops its
+phase. Scheduler downtime does not reset deadlines or restore consumed attempts.
+
 Workers cancel handler contexts on deadline, even when heartbeats are healthy.
 Handlers must cooperate and bound their own external calls. A timed-out external
 effect may still finish; engine fencing cannot undo it. Non-cooperative handlers

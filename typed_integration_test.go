@@ -99,6 +99,49 @@ func TestTypedPlanPersistsStepIdentity(t *testing.T) {
 	}
 }
 
+func TestNilInterfaceInputPersistsAndCompletes(t *testing.T) {
+	engine, _ := newIntegrationEngine(t, NewManualClock(time.Unix(1, 0)), 1)
+	activity := DefineActivity[any, any]("echo-null")
+	definition := Define("null-input", func(input any) ([]ActivitySpec, error) {
+		step, err := activity.Step("echo", input)
+		return []ActivitySpec{step}, err
+	})
+	if err := Register(engine.registry, definition); err != nil {
+		t.Fatal(err)
+	}
+	execution, err := Start(t.Context(), engine, definition, nil, WithStartKey("null"))
+	if err != nil || string(execution.Input) != "null" {
+		t.Fatalf("nil start: %#v %v", execution, err)
+	}
+	duplicate, err := Start[any](t.Context(), engine, definition, json.RawMessage("null"), WithStartKey("null"))
+	if err != nil || duplicate.ID != execution.ID {
+		t.Fatalf("JSON-equivalent null start: %#v %v", duplicate, err)
+	}
+	if _, err := Start[any](t.Context(), engine, definition, "different", WithStartKey("null")); !errors.Is(err, ErrStartConflict) {
+		t.Fatalf("conflicting start: %v", err)
+	}
+	worker, err := NewWorker(engine, WorkerConfig{ID: "null"}, activity.Handle(func(_ context.Context, input any) (any, error) {
+		if input != nil {
+			return nil, fmt.Errorf("handler input = %#v, want nil", input)
+		}
+		return nil, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if worked, err := worker.RunOnce(t.Context()); err != nil || !worked {
+		t.Fatalf("null handler: %v %v", worked, err)
+	}
+	value, err := activity.WorkflowResult(t.Context(), engine, execution.ID)
+	if err != nil || value != nil {
+		t.Fatalf("typed null result: %#v %v", value, err)
+	}
+	stored, err := engine.Workflow(t.Context(), execution.ID)
+	if err != nil || stored.State != WorkflowCompleted || string(stored.Input) != "null" || string(stored.Output) != "null" {
+		t.Fatalf("persisted nulls: %#v %v", stored, err)
+	}
+}
+
 func TestHandlerFailuresRemainFailures(t *testing.T) {
 	for _, kind := range []string{"empty", "panic", "exit", "nul"} {
 		t.Run(kind, func(t *testing.T) {

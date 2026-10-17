@@ -4,6 +4,27 @@ Workflow plans, retry policies, cleanup declarations, and payload identities are
 stored before work becomes claimable. An existing execution continues this stored
 plan after a restart. Definition code runs only when starting an execution.
 
+## Unreleased anonymous struct correction
+
+The post-v1.0.0 fix changes contracts for unnamed struct activity inputs or
+outputs, including those inside pointers, arrays, slices, or maps. v1.0.0 omitted
+field embedding from these identities: `struct{ Payload }` and
+`struct{ Payload Payload }` could match despite incompatible JSON shapes.
+Named payload types and their containers keep their existing identities.
+
+Before upgrading an affected application, pause new starts and drain its old
+forward work, retry waits, and required cleanup using the original binary and
+payload declarations. Keep that binary for typed reads of old results. Then
+deploy the fixed library with new affected activity and workflow versions and
+resume starts. The fix requires no database migration.
+
+New workers leave ambiguous v1 unnamed-struct contracts pending as unsupported;
+they consume no attempts. New typed result reads reject those contracts with
+`ErrTypeMismatch`. `Engine.Workflow` still exposes the stored output JSON for
+application inspection. Deadlines continue during draining. Do not rewrite rows
+or advertise the old contract from a new handler: its original shape cannot be
+inferred safely. See [ADR 0011](decisions/0011-anonymous-struct-contracts.md).
+
 ## Declare immutable identities
 
 ```go
@@ -69,8 +90,8 @@ records for the business lifetime, independently of engine snapshot recovery.
 
 The PostgreSQL suite upgrades all earlier repository schemas and preserves active
 leases, retry waits, cancellations, cleanup, and history. It also interrupts blocked
-DDL and retries concurrent migration calls. These are prerelease schema fixtures;
-there are no previously published v1 schemas yet.
+DDL and retries concurrent migration calls. The fixtures include prerelease
+schemas; the v1.0.0 migration catalog remains the published baseline.
 
 ## Rehearse snapshot recovery
 

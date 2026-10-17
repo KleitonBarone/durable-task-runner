@@ -39,10 +39,12 @@ func typeIdentity(t reflect.Type) string {
 	case reflect.Map:
 		return "map[" + typeIdentity(t.Key()) + "]" + typeIdentity(t.Elem())
 	case reflect.Struct:
-		identity := "struct{"
+		// All unnamed structs use the new format. Reusing the v1 identity for
+		// non-embedded fields would still match ambiguous old embedded payloads.
+		identity := "struct/v2{"
 		for i := 0; i < t.NumField(); i++ {
 			field := t.Field(i)
-			identity += field.PkgPath + "/" + field.Name + ":" + typeIdentity(field.Type) + ":" + string(field.Tag) + ";"
+			identity += fmt.Sprintf("%s/%s:%t:%s:%q;", field.PkgPath, field.Name, field.Anonymous, typeIdentity(field.Type), string(field.Tag))
 		}
 		return identity + "}"
 	default:

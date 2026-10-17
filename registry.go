@@ -117,7 +117,9 @@ func Register[Input any](registry *Registry, definition Definition[Input]) error
 		inputType: inputType,
 		encodePlan: func(value any) (json.RawMessage, []ActivitySpec, error) {
 			typed, ok := value.(Input)
-			if !ok {
+			// A nil interface has no dynamic type to assert. Its zero value is
+			// still a valid input when the definition declares an interface.
+			if !ok && (value != nil || inputType.Kind() != reflect.Interface) {
 				return nil, nil, fmt.Errorf("%w: workflow %q expects %v, got %T", ErrInvalidInput, definition.Name, inputType, value)
 			}
 			encoded, err := json.Marshal(typed)

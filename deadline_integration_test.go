@@ -56,6 +56,78 @@ func TestHeartbeatsCannotExtendAttemptDeadline(t *testing.T) {
 	}
 }
 
+func TestDelayedRecoveryPreservesEarlierLeaseExpiry(t *testing.T) {
+	for _, cleanup := range []bool{false, true} {
+		name := "forward"
+		if cleanup {
+			name = "compensation"
+		}
+		t.Run(name, func(t *testing.T) {
+			var engine *Engine
+			var clock *ManualClock
+			var execution WorkflowExecution
+			leaseDuration := 30 * time.Second
+			if cleanup {
+				engine, clock, execution = compensationExecution(t, RetryPolicy{})
+				completeForwardSteps(t, engine, 2)
+				failForward(t, engine)
+				leaseDuration = 500 * time.Millisecond
+			} else {
+				engine, clock, execution = deadlineExecution(t, 5*time.Minute)
+			}
+			first, err := engine.ClaimActivity(t.Context(), "disappeared", leaseDuration)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Both limits pass while the scheduler is down, but ownership ended first.
+			clock.Advance(6 * time.Minute)
+			restarted, err := New(engine.pool, NewRegistry(), clock)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n, err := restarted.RecoverAbandoned(t.Context(), 10); err != nil || n != 1 {
+				t.Fatalf("delayed recovery: %d %v", n, err)
+			}
+			attempts, err := restarted.Attempts(t.Context(), first.ActivityID)
+			if err != nil || len(attempts) != 1 || attempts[0].State != AttemptAbandoned || attempts[0].Error != "lease_expired" {
+				t.Fatalf("earlier lease expiry must remain abandonment: %#v %v", attempts, err)
+			}
+			leases, err := restarted.ListLeases(t.Context(), first.ActivityID, PageRequest{})
+			if err != nil || len(leases.Items) != 1 || leases.Items[0].State != LeaseExpired {
+				t.Fatalf("expired ownership: %#v %v", leases, err)
+			}
+			if n, err := restarted.RecoverAbandoned(t.Context(), 10); err != nil || n != 0 {
+				t.Fatalf("repeated recovery: %d %v", n, err)
+			}
+			second, err := restarted.ClaimActivity(t.Context(), "replacement", leaseDuration)
+			if err != nil || second.ActivityID != first.ActivityID || second.AttemptNumber != 2 || second.StepKey != first.StepKey {
+				t.Fatalf("replacement: %#v %v", second, err)
+			}
+			if err := restarted.CompleteActivity(t.Context(), first, []byte(`"late"`)); !errors.Is(err, ErrLeaseLost) {
+				t.Fatalf("stale acknowledgement: %v", err)
+			}
+			if err := restarted.CompleteActivity(t.Context(), second, []byte(`"done"`)); err != nil {
+				t.Fatal(err)
+			}
+			want := WorkflowCompleted
+			if cleanup {
+				remaining, err := restarted.ClaimActivity(t.Context(), "replacement", time.Second)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := restarted.CompleteActivity(t.Context(), remaining, []byte(`"done"`)); err != nil {
+					t.Fatal(err)
+				}
+				want = WorkflowFailed
+			}
+			result, err := restarted.Workflow(t.Context(), execution.ID)
+			if err != nil || result.State != want {
+				t.Fatalf("recovered workflow: %#v %v", result, err)
+			}
+		})
+	}
+}
+
 func TestWorkflowDeadlineStopsUnclaimedWork(t *testing.T) {
 	engine, clock, execution := deadlineExecution(t, time.Minute, WithWorkflowTimeout(2*time.Second), WithStartKey("deadline"))
 	clock.Advance(2 * time.Second)

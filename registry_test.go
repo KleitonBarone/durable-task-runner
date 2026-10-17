@@ -3,12 +3,58 @@ package durable
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"reflect"
 	"sync"
 	"testing"
 )
 
 type registryInput struct {
 	Value string `json:"value"`
+}
+
+func TestRegistryAcceptsNilInputs(t *testing.T) {
+	t.Run("any", testRegistryNilInput[any])
+	t.Run("nonempty interface", testRegistryNilInput[error])
+	t.Run("pointer", testRegistryNilInput[*registryInput])
+	t.Run("map", testRegistryNilInput[map[string]string])
+	t.Run("slice", testRegistryNilInput[[]string])
+}
+
+func testRegistryNilInput[Input any](t *testing.T) {
+	t.Helper()
+	var zero Input
+	registry := NewRegistry()
+	definition := Define("nil", func(input Input) ([]ActivitySpec, error) {
+		if !reflect.DeepEqual(input, zero) {
+			t.Errorf("plan received %#v, want nil", input)
+		}
+		step, err := NewActivity("echo", input)
+		return []ActivitySpec{step}, err
+	})
+	if err := Register(registry, definition); err != nil {
+		t.Fatal(err)
+	}
+	registered, _ := registry.lookup("nil")
+	encoded, plan, err := registered.encodePlan(zero)
+	if err != nil || string(encoded) != "null" || len(plan) != 1 || string(plan[0].Input) != "null" {
+		t.Fatalf("nil input plan: %s %#v %v", encoded, plan, err)
+	}
+}
+
+func TestRegistryRejectsNilForConcreteInput(t *testing.T) {
+	registry := NewRegistry()
+	definition := Define("concrete", func(registryInput) ([]ActivitySpec, error) {
+		t.Error("plan ran for an invalid input")
+		return nil, nil
+	})
+	if err := Register(registry, definition); err != nil {
+		t.Fatal(err)
+	}
+	registered, _ := registry.lookup("concrete")
+	if _, _, err := registered.encodePlan(nil); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("concrete input accepted untyped nil: %v", err)
+	}
 }
 
 func TestRegistryDoesNotMutateReusablePlan(t *testing.T) {
