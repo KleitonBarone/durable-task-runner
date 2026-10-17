@@ -116,7 +116,9 @@ func (e *Engine) recoverWorkflow(ctx context.Context, tx pgx.Tx, workflowID stri
 		}
 		d := delivery{workflowID: workflowID, activityID: item.activityID, attemptID: item.attemptID, leaseID: item.leaseID}
 		state, message := AttemptAbandoned, "lease_expired"
-		if !item.deadlineAt.After(now) {
+		// Scheduler downtime must not turn an earlier loss of ownership into a
+		// handler timeout. Equality means the deadline capped the lease.
+		if !item.deadlineAt.After(item.expiresAt) {
 			state, message = AttemptTimedOut, "attempt_deadline"
 		}
 		if err := e.recordAttemptFailure(ctx, tx, d, state, message, false, now); err != nil {

@@ -12,6 +12,24 @@ The release dependency scan was moved ahead of 3B after finding affected driver,
 text, and toolchain versions. ADR 0008 sets the patched Go 1.26.9 baseline and
 adds the reproducible `vuln` check. Final release scanning remains required.
 
+## Post-v1 review fixes
+
+These corrections are being delivered on `fix/review-findings` after the published
+v1.0.0 tag. They preserve the bounded scope above; no release tag is moved.
+
+1. [x] `fix(recovery): preserve abandonment after scheduler downtime`. Compare
+   stored lease expiry and attempt deadline; test forward and cleanup recovery,
+   stale acknowledgements, and idempotent reconciliation. See ADR 0010.
+2. [ ] `fix(types): distinguish embedded struct contracts`. Separate incompatible
+   JSON shapes, test routing and result reads, and document draining ambiguous
+   v1 contracts without rewriting stored plans.
+3. [ ] `fix(input): accept nil interface workflow inputs`. Preserve JSON null
+   through planning and execution while retaining wrong-type validation.
+
+Each fix includes focused failing-before/passing-after evidence, a reviewed commit,
+and a push. The final gate is `fmt`, `check`, `race`, `vuln`, and CI on the final
+pushed commit. The draft PR collects the fixes for review; publication is separate.
+
 ## What completion means
 
 Durable Task Runner should let a Go application run a sequence of background

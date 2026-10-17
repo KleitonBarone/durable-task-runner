@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Preserve abandoned delivery recovery when the scheduler returns after an attempt
+  deadline but ownership expired earlier. Forward and cleanup work retain their
+  finite claim budgets and phase deadlines.
+
 ## v1.0.0
 
 The first complete bounded release, qualified through a prerelease before final
