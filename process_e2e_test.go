@@ -80,6 +80,10 @@ func TestProcessFixture(t *testing.T) {
 		return err
 	}
 	barrier := func() error { return barrierID("") }
+	if role == "version-worker" {
+		runVersionWorker(t, ctx, pool, engine, id, os.Getenv("DURABLE_PROCESS_WINDOW"), barrier)
+		return
+	}
 	switch role {
 	case "scheduler":
 		scheduler, err := durable.NewScheduler(engine, 20*time.Millisecond, 100)

@@ -8,9 +8,9 @@ Use it for jobs such as imports or account provisioning where losing progress
 between steps would leave work unfinished. Your application supplies Go handlers;
 the engine stores progress and coordinates workers through PostgreSQL.
 
-The project is experimental. The durable core includes bounded retries,
-execution deadlines, cooperative cancellation, and explicit compensation.
-Safe workflow version upgrades are still planned. See the [roadmap to v1](ROADMAP.md).
+The project is experimental. It supports bounded retries, execution deadlines,
+cooperative cancellation, explicit compensation, and versioned handlers.
+Operator tooling and release qualification remain. See the [roadmap to v1](ROADMAP.md).
 
 ## Try it
 
@@ -28,8 +28,8 @@ These commands also work in PowerShell. If Docker is installed only inside WSL,
 the development command uses the Ubuntu distribution automatically.
 
 The example runs fake customer welcome steps, prints the timeline and result,
-then shuts down. It creates no real accounts or email. Other modes run workers
-and the scheduler in separate processes.
+then shuts down. It creates no real accounts or email. Other modes run separate
+worker and scheduler processes.
 
 Stop PostgreSQL with `go run ./cmd/dev down`. Its development volume is preserved.
 
@@ -45,8 +45,8 @@ Start with the complete [Go example](cmd/example/main.go) and the
 5. Run one scheduler for recovery. Read prior-step results in handlers and inspect
    outcomes through public APIs.
 
-Your application owns runtime configuration and lifecycle. No message broker or
-separate control service is required.
+Your application owns runtime configuration and lifecycle. PostgreSQL coordinates
+the processes.
 
 Install an exact pushed revision, replacing `<commit>` with its SHA:
 
@@ -76,8 +76,9 @@ A handler error fails its workflow unless its step opts into bounded retries.
 The default budget is three claims, including crashes. Attempts default to five
 minutes and workflows to 24 hours; heartbeats cannot extend these limits. See
 [retry and deadline options](docs/retries.md). The worker continues to other jobs.
-The last step's output is the workflow result. Keep handlers compatible with
-executions in progress.
+The last step's output is the workflow result. Versioned handlers let old and new
+executions coexist. Follow the [upgrade guide](docs/upgrades.md) before deploying
+incompatible changes.
 
 Applications can [cancel an execution](docs/cancellation.md). A committed request
 stops forward progress and asks handlers to stop; it does not undo external effects.

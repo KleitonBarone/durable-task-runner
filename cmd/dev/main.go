@@ -75,7 +75,7 @@ func repositoryRoot() (string, error) {
 
 func (a *app) run(ctx context.Context, args []string) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
-		fmt.Println("Usage: go run ./cmd/dev <doctor|up|down|test|integration|e2e|check|race|example|consumer|fmt|fmt-check|lint> [go test arguments]")
+		fmt.Println("Usage: go run ./cmd/dev <doctor|up|down|test|integration|e2e|check|race|restore|example|consumer|fmt|fmt-check|lint> [go test arguments]")
 		return nil
 	}
 	switch args[0] {
@@ -143,8 +143,13 @@ func (a *app) run(ctx context.Context, args []string) error {
 			if err := a.example(ctx, db.url); err != nil {
 				return err
 			}
-			return a.consumer(ctx, db.url)
+			if err := a.consumer(ctx, db.url); err != nil {
+				return err
+			}
+			return a.restoreRehearsal(ctx, db)
 		})
+	case "restore":
+		return a.withDatabase(ctx, a.restoreRehearsal)
 	case "consumer":
 		return a.withDatabase(ctx, func(ctx context.Context, db database) error {
 			return a.consumer(ctx, db.url)

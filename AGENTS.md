@@ -4,7 +4,7 @@
 
 Durable Task Runner explores how multi-step jobs survive retries, cancellation, and worker failure. Correct state transitions matter more than feature count.
 
-Read `README.md` and `ROADMAP.md` before changing scope. Milestones through 2C are implemented. Milestone 3A is next. Describe later milestones as planned until their exit gates pass.
+Read `README.md` and `ROADMAP.md` before changing scope. Milestones through 3A are implemented. Milestone 3B is next. Describe later milestones as planned until their exit gates pass.
 
 ## Product rules
 
@@ -15,6 +15,7 @@ Read `README.md` and `ROADMAP.md` before changing scope. Milestones through 2C a
 - Cancellation is a state transition, not a process kill. Define what happens to in-flight activities.
 - Compensation is explicit workflow behavior. Do not pretend rollback is automatic.
 - Workflow version changes must not corrupt executions already in progress.
+- Keep name/version/schema identities immutable, including cleanup. Preserve applied migration SQL; runtime mutations check the current checksum catalog under a shared migration lock.
 - Keep stable step keys and effect keys independent of attempts and lease tokens. Built-in workers claim only compatible activity names and type contracts.
 - A recorded task failure must not stop a healthy worker. Preserve bounded reconnect and shutdown behavior, including one active handler per worker instance.
 
@@ -34,13 +35,15 @@ go run ./cmd/dev check
 go run ./cmd/dev race
 ```
 
-`check` starts isolated PostgreSQL, checks formatting and static analysis, runs unit/integration/process tests and the example, verifies a separate consumer module with worker/scheduler processes, and cleans up its own containers. It does not need `up` and does not use the development database. Run `race` for runtime/concurrency changes. Make targets call these same commands.
+`check` starts isolated PostgreSQL, checks formatting and static analysis, runs unit/integration/process tests and the example, verifies a separate consumer module with worker/scheduler recovery, restores a snapshot into a second isolated database, and cleans up its own containers. It does not need `up` and does not use the development database. Run `race` for runtime/concurrency changes. Make targets call these same commands.
 
 Use `go run ./cmd/dev test -run TestName .` for focused unit work. Explicit `integration` runs require `DURABLE_TEST_DATABASE_URL` pointing to a disposable database and fail when it is missing. See `CONTRIBUTING.md` for direct Go commands, WSL behavior, diagnostics, and targeted repetitions.
 
 Use deterministic tests with a controllable clock. Cover worker crashes between side effects and acknowledgements, expired leases, duplicate delivery, concurrent claims, invalid transitions, recovery, retry exhaustion, deadline/cancellation races, non-cooperative handlers, reverse cleanup, and compensation failure. Cleanup preserves the original cause and has an independent deadline.
 
 Do not use real third-party services in tests. Model activities with deterministic fakes and explicit failure injection.
+
+Keep `testdata/history` fixtures portable with UTC timestamps and normalized identities. Inspect fixture changes as compatibility changes; ordinary tests must not rewrite them. Migration fixtures cover every prior repository schema and in-progress phases.
 
 ## Documentation boundaries
 

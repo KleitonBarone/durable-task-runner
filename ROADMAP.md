@@ -1,7 +1,7 @@
 # Roadmap to v1
 
 This is the implementation plan for the first complete release. Milestones 0 and
-1, 1A, 1B, and milestone 2 are implemented. Milestone 3A is next.
+1, 1A, 1B, milestone 2, and 3A are implemented. Milestone 3B is next.
 Every unchecked item below is planned work.
 
 See the [delivery plan](docs/delivery-plan.md) for ordered commits, branches,
@@ -78,7 +78,7 @@ process crashes, scheduler restart, graceful shutdown, and controlled loop tests
 | Worker behavior | Workers filter by name/type contract, continue after task failures, and bound reconnect/shutdown | Implemented in 1B; persisted retry/deadline policies remain in 2A |
 | Failure acknowledgement | Explicit error presence controls failure, including empty messages and handler panics | Implemented in 1B; preserve this distinction in later terminal outcomes |
 | Integration | Typed activities, stable step/effect keys, keyed starts, prior/final results, and external consumer | Implemented in 1B; tagged-module qualification remains in milestone 4 |
-| Evolution | Plans are persisted, but workflow and handler versions are absent | Durable version identity and deployment compatibility rules |
+| Evolution | Versioned workflow/handler/cleanup contracts, migration guards, history fixtures, and restored pending work | Implemented in 3A; retain these upgrade checks for releases |
 | Operations | Queries fetch one execution and unbounded activity/history lists | Bounded inspection, attempt details, diagnostics, and retention controls |
 
 ## Implementation order
@@ -351,28 +351,28 @@ failure inspection and example.
 
 ### Deliverables
 
-- [ ] Persist workflow and activity handler versions, payload schema identity, and
+- [x] Persist workflow and activity handler versions, payload schema identity, and
   compensation versions. Include versions in claim capabilities. Never route an
   old execution to an incompatible new handler.
-- [ ] Keep old/new registrations available during draining. Unsupported versions
+- [x] Keep old/new registrations available during draining. Unsupported versions
   remain pending with visible diagnostics. Document deploy, drain, and removal rules.
-- [ ] Continue executing the stored plan. Test history compatibility by replaying
+- [x] Continue executing the stored plan. Test history compatibility by replaying
   recorded transition fixtures into expected state, not rerunning workflow code.
   Include retry, cancellation, and compensation fixtures.
-- [ ] Test migrations from milestone 1 data and each supported released schema.
+- [x] Test migrations from milestone 1 data and each supported released schema.
   Preserve applied files, add new migrations, detect incompatible schema versions,
   and test concurrent and interrupted migrations. Document backup/restore before
   destructive changes.
-- [ ] Define binary/schema rollback compatibility. Prefer additive migrations;
+- [x] Define binary/schema rollback compatibility. Prefer additive migrations;
   document forward repair when an older binary would be unsafe.
 
 ### Exit gate
 
-- [ ] Start an old definition, deploy an incompatible new version, and finish each
+- [x] Start an old definition, deploy an incompatible new version, and finish each
   execution with its matching handlers. Recovery does not rerun definition code.
-- [ ] Migration/fixture tests preserve active leases, retry waits, cancellations,
+- [x] Migration/fixture tests preserve active leases, retry waits, cancellations,
   cleanup, and timeline interpretation across supported upgrades.
-- [ ] Restore a snapshot into an isolated database and finish pending work. Document
+- [x] Restore a snapshot into an isolated database and finish pending work. Document
   that restoring older data can redeliver effects performed after the backup.
 
 Suggested PRs: version identity/routing; coexistence example; migration/history
@@ -462,5 +462,5 @@ state-machine ADR, SQL constraints, tests, and user docs together when semantics
 change. Introduce verification before the feature it must verify, then extend it
 at each milestone.
 
-The next action is milestone 3A after the compensation PR merges.
-Safe upgrades, operations, and release qualification remain.
+The next action is milestone 3B after the safe-evolution PR merges.
+Operations and release qualification remain.

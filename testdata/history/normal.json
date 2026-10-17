@@ -1,0 +1,127 @@
+{
+  "Events": [
+    {
+      "Sequence": 1,
+      "WorkflowID": "workflow",
+      "ActivityID": null,
+      "AttemptID": null,
+      "Type": "workflow.started",
+      "Details": {
+        "deadline_at": "1970-01-02T00:16:40Z",
+        "definition": "history",
+        "input_schema": "legacy",
+        "previous_execution_id": null,
+        "version": "1"
+      },
+      "RecordedAt": "1970-01-01T00:16:40Z"
+    },
+    {
+      "Sequence": 2,
+      "WorkflowID": "workflow",
+      "ActivityID": "activity-1",
+      "AttemptID": null,
+      "Type": "activity.scheduled",
+      "Details": {
+        "name": "first",
+        "position": 0,
+        "state": "ready",
+        "step_key": "step-0",
+        "version": "1"
+      },
+      "RecordedAt": "1970-01-01T00:16:40Z"
+    },
+    {
+      "Sequence": 3,
+      "WorkflowID": "workflow",
+      "ActivityID": "activity-2",
+      "AttemptID": null,
+      "Type": "activity.scheduled",
+      "Details": {
+        "name": "second",
+        "position": 1,
+        "state": "blocked",
+        "step_key": "step-1",
+        "version": "1"
+      },
+      "RecordedAt": "1970-01-01T00:16:40Z"
+    },
+    {
+      "Sequence": 4,
+      "WorkflowID": "workflow",
+      "ActivityID": "activity-1",
+      "AttemptID": "activity-1/attempt-1",
+      "Type": "activity.claimed",
+      "Details": {
+        "attempt": 1,
+        "lease_expires_at": "1970-01-01T00:16:41Z",
+        "version": "1",
+        "worker_id": "worker"
+      },
+      "RecordedAt": "1970-01-01T00:16:40Z"
+    },
+    {
+      "Sequence": 5,
+      "WorkflowID": "workflow",
+      "ActivityID": "activity-1",
+      "AttemptID": "activity-1/attempt-1",
+      "Type": "activity.completed",
+      "Details": {
+        "attempt": 1
+      },
+      "RecordedAt": "1970-01-01T00:16:40Z"
+    },
+    {
+      "Sequence": 6,
+      "WorkflowID": "workflow",
+      "ActivityID": "activity-2",
+      "AttemptID": null,
+      "Type": "activity.ready",
+      "Details": {},
+      "RecordedAt": "1970-01-01T00:16:40Z"
+    },
+    {
+      "Sequence": 7,
+      "WorkflowID": "workflow",
+      "ActivityID": "activity-2",
+      "AttemptID": "activity-2/attempt-1",
+      "Type": "activity.claimed",
+      "Details": {
+        "attempt": 1,
+        "lease_expires_at": "1970-01-01T00:16:41Z",
+        "version": "1",
+        "worker_id": "worker"
+      },
+      "RecordedAt": "1970-01-01T00:16:40Z"
+    },
+    {
+      "Sequence": 8,
+      "WorkflowID": "workflow",
+      "ActivityID": "activity-2",
+      "AttemptID": "activity-2/attempt-1",
+      "Type": "activity.completed",
+      "Details": {
+        "attempt": 1
+      },
+      "RecordedAt": "1970-01-01T00:16:40Z"
+    },
+    {
+      "Sequence": 9,
+      "WorkflowID": "workflow",
+      "ActivityID": null,
+      "AttemptID": null,
+      "Type": "workflow.completed",
+      "Details": {},
+      "RecordedAt": "1970-01-01T00:16:40Z"
+    }
+  ],
+  "Workflow": "completed",
+  "Compensation": "none",
+  "Activities": {
+    "activity-1": "completed",
+    "activity-2": "completed"
+  },
+  "Attempts": {
+    "activity-1/attempt-1": "completed",
+    "activity-2/attempt-1": "completed"
+  }
+}

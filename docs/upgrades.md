@@ -71,3 +71,26 @@ The PostgreSQL suite upgrades all earlier repository schemas and preserves activ
 leases, retry waits, cancellations, cleanup, and history. It also interrupts blocked
 DDL and retries concurrent migration calls. These are prerelease schema fixtures;
 there are no previously published v1 schemas yet.
+
+## Rehearse snapshot recovery
+
+```sh
+go run ./cmd/dev restore
+```
+
+This command creates two disposable PostgreSQL instances. A short-lived owner
+claims a welcome step, commits its fake effect, and exits without acknowledgement.
+The command uses `pg_dump` and `psql` to restore that snapshot into the other
+instance, then starts separate worker and scheduler processes against the restore.
+It verifies an abandoned attempt, a completed replacement, one account effect,
+and a completed successor. Both databases are removed even if restoration fails.
+`check` includes this rehearsal. It never selects the development database.
+
+The process upgrade test additionally kills a v1 worker after its effect, deploys
+an incompatible v2 worker, and proves each version finishes with its matching
+handler. The replacement v1 worker has no old workflow definition registered.
+
+Five recorded history fixtures preserve normal completion, abandonment, retries,
+cancellation, and cleanup. Unit tests project their events into expected states;
+integration tests compare current histories and persisted outcomes with those
+fixtures. This tests history interpretation, not replay of arbitrary Go code.
