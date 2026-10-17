@@ -3,11 +3,37 @@ package durable
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 )
 
 type registryInput struct {
 	Value string `json:"value"`
+}
+
+func TestRegistryDoesNotMutateReusablePlan(t *testing.T) {
+	shared := []ActivitySpec{{Name: "echo", Input: json.RawMessage(`"input"`)}}
+	registry := NewRegistry()
+	definition := Define("reusable", func(string) ([]ActivitySpec, error) { return shared, nil })
+	if err := Register(registry, definition); err != nil {
+		t.Fatal(err)
+	}
+	registered, _ := registry.lookup(definition.Name)
+	var group sync.WaitGroup
+	for range 20 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			_, plan, err := registered.encodePlan("input")
+			if err != nil || len(plan) != 1 || plan[0].Key != "step-0" {
+				t.Errorf("plan: %#v %v", plan, err)
+			}
+		}()
+	}
+	group.Wait()
+	if shared[0].Key != "" {
+		t.Fatalf("registry mutated the application's reusable plan: key = %q", shared[0].Key)
+	}
 }
 
 func TestRegistryEncodesTypedInputAndPlan(t *testing.T) {

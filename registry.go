@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -90,6 +91,7 @@ func Register[Input any](registry *Registry, definition Definition[Input]) error
 			if len(activities) == 0 {
 				return nil, nil, fmt.Errorf("%w: workflow %q must schedule at least one activity", ErrInvalidInput, definition.Name)
 			}
+			activities = slices.Clone(activities)
 			keys := make(map[string]bool, len(activities))
 			for i := range activities {
 				activity := &activities[i]
