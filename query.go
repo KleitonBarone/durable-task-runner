@@ -11,10 +11,13 @@ import (
 func (e *Engine) Workflow(ctx context.Context, workflowID string) (WorkflowExecution, error) {
 	var execution WorkflowExecution
 	err := e.pool.QueryRow(ctx, `
-		SELECT id, definition_name, input, state, created_at, updated_at, completed_at, output, start_key
+		SELECT id, definition_name, input, state, created_at, updated_at, completed_at, output, start_key, terminal_reason, last_error, deadline_at, timeout_ns, previous_execution_id
 		FROM workflow_executions WHERE id = $1`, workflowID).Scan(
 		&execution.ID, &execution.DefinitionName, &execution.Input, &execution.State,
 		&execution.CreatedAt, &execution.UpdatedAt, &execution.CompletedAt, &execution.Output, &execution.StartKey,
+		&execution.TerminalReason, &execution.LastError,
+		&execution.DeadlineAt, &execution.Timeout,
+		&execution.PreviousExecutionID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WorkflowExecution{}, fmt.Errorf("%w: workflow %q", ErrNotFound, workflowID)
@@ -28,7 +31,7 @@ func (e *Engine) Workflow(ctx context.Context, workflowID string) (WorkflowExecu
 func (e *Engine) Activities(ctx context.Context, workflowID string) ([]Activity, error) {
 	rows, err := e.pool.Query(ctx, `
 		SELECT id, workflow_id, position, name, input, COALESCE(output, 'null'::jsonb), state, step_key,
-		       attempt_count, created_at, updated_at, completed_at
+		       attempt_count, created_at, updated_at, completed_at, retry_policy, available_at, attempt_timeout_ns, last_error
 		FROM activities WHERE workflow_id = $1 ORDER BY position`, workflowID)
 	if err != nil {
 		return nil, fmt.Errorf("read activities: %w", err)
@@ -41,6 +44,7 @@ func (e *Engine) Activities(ctx context.Context, workflowID string) ([]Activity,
 			&activity.ID, &activity.WorkflowID, &activity.Position, &activity.Name,
 			&activity.Input, &activity.Output, &activity.State, &activity.StepKey, &activity.AttemptCount,
 			&activity.CreatedAt, &activity.UpdatedAt, &activity.CompletedAt,
+			&activity.RetryPolicy, &activity.AvailableAt, &activity.AttemptTimeout, &activity.LastError,
 		); err != nil {
 			return nil, fmt.Errorf("scan activity: %w", err)
 		}

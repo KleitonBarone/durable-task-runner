@@ -67,10 +67,11 @@ func (e *Engine) Migrate(ctx context.Context) error {
 }
 
 func (e *Engine) start(ctx context.Context, definitionName string, input any, options ...StartOption) (WorkflowExecution, error) {
-	key, err := startKey(options)
+	config, err := parseStartOptions(options)
 	if err != nil {
 		return WorkflowExecution{}, err
 	}
+	key := config.key
 	definition, ok := e.registry.lookup(definitionName)
 	if !ok {
 		return WorkflowExecution{}, fmt.Errorf("%w: %q", ErrUnknownWorkflow, definitionName)
@@ -101,28 +102,25 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any, op
 			return WorkflowExecution{}, err
 		}
 	}
-	now := e.clock.Now().UTC()
-	execution := WorkflowExecution{
-		ID:             workflowID,
-		DefinitionName: definitionName,
-		StartKey:       key,
-		Input:          encodedInput,
-		State:          WorkflowRunning,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	}
-
 	tx, err := e.pool.Begin(ctx)
 	if err != nil {
 		return WorkflowExecution{}, fmt.Errorf("begin workflow: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	now, err := e.now(ctx, tx)
+	if err != nil {
+		return WorkflowExecution{}, err
+	}
+	execution := WorkflowExecution{ID: workflowID, DefinitionName: definitionName, StartKey: key, Input: encodedInput, State: WorkflowRunning, CreatedAt: now, UpdatedAt: now}
+	execution.Timeout = config.timeout
+	execution.DeadlineAt = now.Add(config.timeout)
+	execution.PreviousExecutionID = config.previous
 
 	inserted, err := tx.Exec(ctx, `
-		INSERT INTO workflow_executions (id, definition_name, input, state, created_at, updated_at, start_key)
-		VALUES ($1, $2, $3, $4, $5, $5, $6)
+		INSERT INTO workflow_executions (id, definition_name, input, state, created_at, updated_at, start_key, timeout_ns, deadline_at, previous_execution_id)
+		VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9)
 		ON CONFLICT (definition_name, start_key) DO NOTHING`,
-		workflowID, definitionName, encodedInput, WorkflowRunning, now, key)
+		workflowID, definitionName, encodedInput, WorkflowRunning, now, key, config.timeout, execution.DeadlineAt, config.previous)
 	if err != nil {
 		return WorkflowExecution{}, fmt.Errorf("persist workflow: %w", payloadDatabaseError(err))
 	}
@@ -140,8 +138,19 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any, op
 		}
 		return e.Workflow(ctx, existingID)
 	}
+	if config.previous != nil {
+		var state WorkflowState
+		if err := tx.QueryRow(ctx, `SELECT state FROM workflow_executions WHERE id=$1`, config.previous).Scan(&state); errors.Is(err, pgx.ErrNoRows) {
+			return WorkflowExecution{}, ErrNotFound
+		} else if err != nil {
+			return WorkflowExecution{}, err
+		}
+		if state != WorkflowCompleted && state != WorkflowFailed && state != WorkflowTimedOut {
+			return WorkflowExecution{}, fmt.Errorf("%w: predecessor must be terminal", ErrInvalidInput)
+		}
+	}
 	if err := appendHistory(ctx, tx, workflowID, nil, nil, "workflow.started", map[string]any{
-		"definition": definitionName,
+		"definition": definitionName, "previous_execution_id": config.previous, "deadline_at": execution.DeadlineAt,
 	}, now); err != nil {
 		return WorkflowExecution{}, err
 	}
@@ -152,9 +161,9 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any, op
 			state = ActivityReady
 		}
 		_, err := tx.Exec(ctx, `
-			INSERT INTO activities (id, workflow_id, position, name, input, state, created_at, updated_at, step_key, contract)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9)`,
-			activityIDs[i], workflowID, i, spec.Name, spec.Input, state, now, spec.Key, spec.contract)
+			INSERT INTO activities (id, workflow_id, position, name, input, state, created_at, updated_at, step_key, contract, retry_policy, attempt_timeout_ns, available_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11, $7)`,
+			activityIDs[i], workflowID, i, spec.Name, spec.Input, state, now, spec.Key, spec.contract, spec.policy, spec.attemptTimeout)
 		if err != nil {
 			return WorkflowExecution{}, fmt.Errorf("persist activity %d: %w", i, payloadDatabaseError(err))
 		}
@@ -181,8 +190,6 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 	if leaseDuration <= 0 {
 		return Claim{}, fmt.Errorf("lease duration must be positive")
 	}
-	now := e.clock.Now().UTC()
-
 	tx, err := e.pool.Begin(ctx)
 	if err != nil {
 		return Claim{}, fmt.Errorf("begin claim: %w", err)
@@ -191,6 +198,8 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 
 	var claim Claim
 	var currentState ActivityState
+	var policy RetryPolicy
+	var attemptTimeout time.Duration
 	names, contracts := capabilityArrays(capabilities)
 	err = tx.QueryRow(ctx, `
 		SELECT a.id, a.workflow_id, a.name, a.input, a.attempt_count, a.state, a.step_key, a.position
@@ -199,7 +208,7 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 		WHERE a.state = 'ready' AND w.state = 'running'
 		  AND ($1::boolean OR (a.name, a.contract) IN (SELECT * FROM unnest($2::text[], $3::text[])))
 		ORDER BY a.created_at, a.workflow_id, a.position
-		FOR UPDATE OF a SKIP LOCKED
+		FOR UPDATE OF w SKIP LOCKED
 		LIMIT 1`, capabilities == nil, names, contracts).Scan(
 		&claim.ActivityID, &claim.WorkflowID, &claim.ActivityName, &claim.ActivityInput,
 		&claim.AttemptNumber, &currentState, &claim.StepKey, &claim.Position,
@@ -209,6 +218,44 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 	}
 	if err != nil {
 		return Claim{}, fmt.Errorf("select activity to claim: %w", err)
+	}
+	if err := tx.QueryRow(ctx, `SELECT state, attempt_count, retry_policy, attempt_timeout_ns FROM activities WHERE id=$1 FOR UPDATE`, claim.ActivityID).Scan(&currentState, &claim.AttemptNumber, &policy, &attemptTimeout); err != nil {
+		return Claim{}, err
+	}
+	if currentState != ActivityReady {
+		return Claim{}, ErrNoActivity
+	}
+	now, err := e.now(ctx, tx)
+	if err != nil {
+		return Claim{}, err
+	}
+	var workflowDeadline time.Time
+	if err := tx.QueryRow(ctx, `SELECT deadline_at FROM workflow_executions WHERE id=$1`, claim.WorkflowID).Scan(&workflowDeadline); err != nil {
+		return Claim{}, err
+	}
+	if !workflowDeadline.After(now) {
+		if err := e.timeoutWorkflow(ctx, tx, claim.WorkflowID, "workflow_deadline", now); err != nil {
+			return Claim{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Claim{}, err
+		}
+		return Claim{}, ErrNoActivity
+	}
+	if claim.AttemptNumber >= policy.MaxAttempts {
+		if _, err := tx.Exec(ctx, `UPDATE activities SET state='failed',updated_at=$2,completed_at=$2,last_error='claim budget exhausted' WHERE id=$1`, claim.ActivityID, now); err != nil {
+			return Claim{}, err
+		}
+		if err := appendHistory(ctx, tx, claim.WorkflowID, &claim.ActivityID, nil, "activity.failed", map[string]any{"reason": "attempt_budget_exhausted"}, now); err != nil {
+			return Claim{}, err
+		}
+		if err := failWorkflow(ctx, tx, claim.WorkflowID, "attempt_budget_exhausted", "claim budget exhausted", now); err != nil {
+			return Claim{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Claim{}, err
+		}
+		return Claim{}, ErrNoActivity
 	}
 	if err := ValidateActivityTransition(currentState, ActivityRunning); err != nil {
 		return Claim{}, err
@@ -228,7 +275,9 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 		return Claim{}, err
 	}
 	claim.WorkerID = workerID
-	claim.LeaseExpiresAt = now.Add(leaseDuration)
+	claim.ClaimedAt = now
+	claim.AttemptDeadline = minTime(now.Add(attemptTimeout), workflowDeadline)
+	claim.LeaseExpiresAt = minTime(now.Add(leaseDuration), claim.AttemptDeadline)
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE activities SET state = $2, attempt_count = $3, updated_at = $4 WHERE id = $1`,
@@ -236,9 +285,9 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 		return Claim{}, fmt.Errorf("mark activity running: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO attempts (id, activity_id, number, worker_id, state, started_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		claim.AttemptID, claim.ActivityID, claim.AttemptNumber, workerID, AttemptRunning, now); err != nil {
+		INSERT INTO attempts (id, activity_id, number, worker_id, state, started_at, deadline_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		claim.AttemptID, claim.ActivityID, claim.AttemptNumber, workerID, AttemptRunning, now, claim.AttemptDeadline); err != nil {
 		return Claim{}, fmt.Errorf("persist attempt: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -262,16 +311,43 @@ func (e *Engine) Heartbeat(ctx context.Context, claim Claim, extension time.Dura
 	if extension <= 0 {
 		return time.Time{}, fmt.Errorf("heartbeat extension must be positive")
 	}
-	now := e.clock.Now().UTC()
+	tx, err := e.pool.Begin(ctx)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("begin heartbeat: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	workflowID, state, err := lockOwnershipWorkflow(ctx, tx, claim.LeaseToken)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if state != WorkflowRunning {
+		return time.Time{}, ErrLeaseLost
+	}
+	if _, err := tx.Exec(ctx, `SELECT l.id FROM leases l JOIN activities a ON a.id=l.activity_id JOIN attempts at ON at.id=l.attempt_id WHERE l.token=$1 FOR UPDATE OF a, at, l`, claim.LeaseToken); err != nil {
+		return time.Time{}, err
+	}
+	now, err := e.now(ctx, tx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if settled, err := e.settleDeadline(ctx, tx, workflowID, claim.LeaseToken, now); err != nil {
+		return time.Time{}, err
+	} else if settled {
+		if err := tx.Commit(ctx); err != nil {
+			return time.Time{}, err
+		}
+		return time.Time{}, errors.Join(ErrLeaseLost, ErrExecutionDeadline)
+	}
 	requestedExpiry := now.Add(extension)
 	var expiresAt time.Time
-	err := e.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE leases l
-		SET heartbeat_at = $2, expires_at = GREATEST(l.expires_at, $3)
-		FROM activities a, attempts at
+		SET heartbeat_at = $2, expires_at = LEAST(GREATEST(l.expires_at, $3),at.deadline_at,w.deadline_at)
+		FROM activities a, attempts at, workflow_executions w
 		WHERE l.token = $1
 		  AND l.activity_id = a.id
 		  AND l.attempt_id = at.id
+		  AND a.workflow_id = w.id
 		  AND l.state = 'active'
 		  AND a.state = 'running'
 		  AND at.state = 'running'
@@ -282,6 +358,9 @@ func (e *Engine) Heartbeat(ctx context.Context, claim Claim, extension time.Dura
 	}
 	if err != nil {
 		return time.Time{}, fmt.Errorf("heartbeat activity: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return time.Time{}, fmt.Errorf("commit heartbeat: %w", err)
 	}
 	return expiresAt, nil
 }
@@ -304,12 +383,18 @@ func (e *Engine) FailActivity(ctx context.Context, claim Claim, activityErr erro
 }
 
 func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.RawMessage, activityErr error) error {
-	now := e.clock.Now().UTC()
 	tx, err := e.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin activity completion: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	_, workflowState, err := lockOwnershipWorkflow(ctx, tx, claim.LeaseToken)
+	if err != nil {
+		return err
+	}
+	if workflowState != WorkflowRunning {
+		return ErrLeaseLost
+	}
 
 	var workflowID string
 	var position int
@@ -317,20 +402,33 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 	var attemptState AttemptState
 	var leaseState LeaseState
 	var expiresAt time.Time
+	var leaseID string
 	err = tx.QueryRow(ctx, `
-		SELECT a.workflow_id, a.position, a.state, at.state, l.state, l.expires_at
+		SELECT a.workflow_id, a.position, a.state, at.state, l.state, l.expires_at, l.id
 		FROM leases l
 		JOIN activities a ON a.id = l.activity_id
 		JOIN attempts at ON at.id = l.attempt_id
 		WHERE l.token = $1 AND l.activity_id = $2 AND l.attempt_id = $3
 		FOR UPDATE OF l, a, at`, claim.LeaseToken, claim.ActivityID, claim.AttemptID).Scan(
-		&workflowID, &position, &activityState, &attemptState, &leaseState, &expiresAt,
+		&workflowID, &position, &activityState, &attemptState, &leaseState, &expiresAt, &leaseID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrLeaseLost
 	}
 	if err != nil {
 		return fmt.Errorf("lock activity completion: %w", err)
+	}
+	now, err := e.now(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if settled, err := e.settleDeadline(ctx, tx, workflowID, claim.LeaseToken, now); err != nil {
+		return err
+	} else if settled {
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		return errors.Join(ErrLeaseLost, ErrExecutionDeadline)
 	}
 	if activityState != ActivityRunning || attemptState != AttemptRunning || leaseState != LeaseActive || !expiresAt.After(now) {
 		return ErrLeaseLost
@@ -340,32 +438,8 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 	}
 
 	if activityErr != nil {
-		errorText := failureMessage(activityErr)
-		if err := ValidateActivityTransition(activityState, ActivityFailed); err != nil {
-			return err
-		}
-		if err := ValidateAttemptTransition(attemptState, AttemptFailed); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE leases SET state = $2, ended_at = $3 WHERE token = $1`, claim.LeaseToken, LeaseReleased, now); err != nil {
-			return fmt.Errorf("release failed lease: %w", err)
-		}
-		if _, err := tx.Exec(ctx, `UPDATE attempts SET state = $2, error_text = $3, ended_at = $4 WHERE id = $1`, claim.AttemptID, AttemptFailed, errorText, now); err != nil {
-			return fmt.Errorf("fail attempt: %w", err)
-		}
-		if _, err := tx.Exec(ctx, `UPDATE activities SET state = $2, updated_at = $3, completed_at = $3 WHERE id = $1`, claim.ActivityID, ActivityFailed, now); err != nil {
-			return fmt.Errorf("fail activity: %w", err)
-		}
-		if err := appendHistory(ctx, tx, workflowID, &claim.ActivityID, &claim.AttemptID, "activity.failed", map[string]any{"error": errorText}, now); err != nil {
-			return err
-		}
-		if err := ValidateWorkflowTransition(WorkflowRunning, WorkflowFailed); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE workflow_executions SET state = $2, updated_at = $3, completed_at = $3 WHERE id = $1 AND state = $4`, workflowID, WorkflowFailed, now, WorkflowRunning); err != nil {
-			return fmt.Errorf("fail workflow: %w", err)
-		}
-		if err := appendHistory(ctx, tx, workflowID, nil, nil, "workflow.failed", map[string]any{"activity_id": claim.ActivityID}, now); err != nil {
+		d := delivery{workflowID: workflowID, activityID: claim.ActivityID, attemptID: claim.AttemptID, leaseID: leaseID}
+		if err := e.recordAttemptFailure(ctx, tx, d, AttemptFailed, failureMessage(activityErr), isPermanent(activityErr), now); err != nil {
 			return err
 		}
 	} else {
@@ -381,7 +455,7 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 		if _, err := tx.Exec(ctx, `UPDATE attempts SET state = $2, ended_at = $3 WHERE id = $1`, claim.AttemptID, AttemptCompleted, now); err != nil {
 			return fmt.Errorf("complete attempt: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `UPDATE activities SET state = $2, output = $3, updated_at = $4, completed_at = $4 WHERE id = $1`, claim.ActivityID, ActivityCompleted, output, now); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE activities SET state = $2, output = $3, updated_at = $4, completed_at = $4, last_error='' WHERE id = $1`, claim.ActivityID, ActivityCompleted, output, now); err != nil {
 			return fmt.Errorf("complete activity: %w", payloadDatabaseError(err))
 		}
 		if err := appendHistory(ctx, tx, workflowID, &claim.ActivityID, &claim.AttemptID, "activity.completed", map[string]any{"attempt": claim.AttemptNumber}, now); err != nil {

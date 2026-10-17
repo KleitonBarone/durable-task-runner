@@ -246,8 +246,10 @@ func TestUnresponsiveHandlerCannotOverlapAnotherInvocation(t *testing.T) {
 		t.Fatalf("concurrent invocation: %v", err)
 	}
 	cancel()
-	if interval := receive(t, clock.created); interval != 5*time.Second {
-		t.Fatalf("shutdown grace = %s", interval)
+	for interval := receive(t, clock.created); interval != 5*time.Second; interval = receive(t, clock.created) {
+		if interval != 5*time.Minute {
+			t.Fatalf("unexpected runtime timer = %s", interval)
+		}
 	}
 	clock.Advance(5 * time.Second)
 	if err := receive(t, done); !errors.Is(err, durable.ErrHandlerUnresponsive) || !errors.Is(err, context.Canceled) {

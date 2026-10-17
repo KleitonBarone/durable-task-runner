@@ -8,16 +8,19 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 type ActivitySpec struct {
-	Name     string
-	Key      string
-	Input    json.RawMessage
-	contract string
+	Name           string
+	Key            string
+	Input          json.RawMessage
+	contract       string
+	policy         RetryPolicy
+	attemptTimeout time.Duration
 }
 
-func NewActivity[Input any](name string, input Input) (ActivitySpec, error) {
+func NewActivity[Input any](name string, input Input, options ...StepOption) (ActivitySpec, error) {
 	if strings.TrimSpace(name) == "" {
 		return ActivitySpec{}, fmt.Errorf("%w: activity name is required", ErrInvalidInput)
 	}
@@ -28,7 +31,11 @@ func NewActivity[Input any](name string, input Input) (ActivitySpec, error) {
 	if err := validatePayload(encoded); err != nil {
 		return ActivitySpec{}, err
 	}
-	return ActivitySpec{Name: name, Input: encoded}, nil
+	spec := ActivitySpec{Name: name, Input: encoded}
+	if err := normalizeActivity(&spec, options); err != nil {
+		return ActivitySpec{}, err
+	}
+	return spec, nil
 }
 
 // Definition turns typed workflow input into a deterministic linear activity
@@ -95,6 +102,9 @@ func Register[Input any](registry *Registry, definition Definition[Input]) error
 			keys := make(map[string]bool, len(activities))
 			for i := range activities {
 				activity := &activities[i]
+				if err := normalizeActivity(activity, nil); err != nil {
+					return nil, nil, err
+				}
 				if activity.Key == "" {
 					activity.Key = fmt.Sprintf("step-%d", i)
 				}

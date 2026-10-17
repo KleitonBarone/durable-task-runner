@@ -174,7 +174,8 @@ release its lease; recovery follows expiry. An unresponsive handler returns
 `ErrHandlerUnresponsive` and prevents that worker instance from invoking another
 handler until the old one returns. Check this error before treating a joined
 `context.Canceled` as clean shutdown. A process can still exit, and Go cannot kill
-an individual handler goroutine. There is no hard activity timeout yet.
+an individual handler goroutine. Attempt deadlines fence engine writes and ask
+handlers to stop; external calls must also have their own limits.
 
 Use one `Run` loop per worker instance. Concurrent `Run`/`RunOnce` calls are
 rejected with `ErrWorkerBusy`. Stop runtime loops and wait for them before closing
@@ -198,8 +199,8 @@ calling an unrelated external service cannot make the external effect atomic.
 
 Lease expiry prevents stale engine acknowledgements, but cannot undo an external
 effect. If a worker commits an external effect and dies before acknowledging it,
-its replacement can repeat the effect. A heartbeat can keep a live handler's lease
-alive indefinitely today, so applications must bound their own external calls.
+its replacement can repeat the effect. Heartbeats cannot extend an attempt or
+workflow deadline. Applications must still bound their own external calls.
 
 ## Inspect progress and failures
 
@@ -225,9 +226,16 @@ Current states are mutable; history records are append-only during execution.
 Heartbeats update the lease without appending a history event on every beat.
 The integration suite asserts this recovery timeline.
 
-Handler failure is terminal for the execution. Later activities stay blocked and
-are not claimed. There are no automatic handler-error retries, cancellation API,
-compensation steps, definition versions, or operator redrive API yet. Preserve the
+Handler errors are terminal by default. A step can opt into bounded retries using
+`WithRetry`; every claim consumes its budget, including abandoned deliveries.
+`WithAttemptTimeout` and `WithWorkflowTimeout` bound execution time independently
+of heartbeat health. See [retry and deadline behavior](retries.md) for defaults,
+terminal reasons, and restart scenarios.
+
+Terminal executions never reopen. Reconcile effects in your application and start
+a new execution with `WithPredecessor(oldID)` when needed. Use a new start key;
+reusing the old key returns its original terminal execution. There is no
+cancellation API, compensation, or definition versioning yet. Preserve the
 meaning of registered workflow and activity names until their executions finish.
 
 See [ADR 0002](decisions/0002-state-machine-and-failure-model.md) for transitions,

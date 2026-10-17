@@ -50,11 +50,11 @@ func arrayLength(t reflect.Type) int {
 
 // Step binds input to a stable key within a workflow. Keys are independent of
 // activity names, so one activity definition can appear more than once.
-func (a ActivityDefinition[Input, Output]) Step(key string, input Input) (ActivitySpec, error) {
+func (a ActivityDefinition[Input, Output]) Step(key string, input Input, options ...StepOption) (ActivitySpec, error) {
 	if key == "" {
 		return ActivitySpec{}, fmt.Errorf("%w: step key is required", ErrInvalidInput)
 	}
-	spec, err := NewActivity(a.name, input)
+	spec, err := NewActivity(a.name, input, options...)
 	if err != nil {
 		return ActivitySpec{}, err
 	}

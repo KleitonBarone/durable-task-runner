@@ -21,7 +21,14 @@ import (
 )
 
 var processDefinition = durable.Define("process-recovery", func(input string) ([]durable.ActivitySpec, error) {
-	first, err := durable.NewActivity("effect", input)
+	var options []durable.StepOption
+	if input == "retry-backoff" {
+		options = append(options, durable.WithRetry(durable.RetryPolicy{RetryErrors: true, InitialInterval: 5 * time.Second, MaximumInterval: 5 * time.Second}))
+	}
+	if input == "hang" {
+		options = append(options, durable.WithAttemptTimeout(time.Second))
+	}
+	first, err := durable.NewActivity("effect", input, options...)
 	if err != nil {
 		return nil, err
 	}
@@ -92,6 +99,16 @@ func TestProcessFixture(t *testing.T) {
 				metadata, ok := durable.Metadata(ctx)
 				if !ok {
 					return "", errors.New("missing activity metadata")
+				}
+				if step == "effect" && window == "retry" && metadata.AttemptNumber == 1 {
+					return "", errors.New("injected retryable failure")
+				}
+				if step == "effect" && window == "hang" && input == "hang" {
+					if err := barrier(); err != nil {
+						return "", err
+					}
+					<-ctx.Done()
+					return "", ctx.Err()
 				}
 				if _, err := pool.Exec(ctx, `INSERT INTO fixture_deliveries (step, effect_key, attempt, attempt_id, workflow_id, step_key) VALUES ($1, $2, $3, $4, $5, $6)`, step, metadata.EffectKey, metadata.AttemptNumber, metadata.AttemptID, metadata.WorkflowID, metadata.StepKey); err != nil {
 					return "", err
@@ -396,4 +413,139 @@ func TestProcessHarnessReportsChildFailure(t *testing.T) {
 		t.Fatal("failed child was reported as success")
 	}
 	fmt.Fprintln(os.Stdout, "injected child failure correctly returned nonzero")
+}
+
+func processTestEngine(t *testing.T) (*durable.Engine, *pgxpool.Pool, string) {
+	t.Helper()
+	pool := testdb.Pool(t)
+	engine, err := durable.New(pool, processRegistry(t), durable.SystemClock{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `CREATE TABLE fixture_barriers(worker text PRIMARY KEY); CREATE TABLE fixture_effects(worker text NOT NULL,step text NOT NULL,effect_key text UNIQUE); CREATE TABLE fixture_deliveries(step text,effect_key text,attempt int,attempt_id text,workflow_id text,step_key text)`); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(os.Getenv("DURABLE_TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := parsed.Query()
+	query.Set("search_path", pool.Config().ConnConfig.RuntimeParams["search_path"])
+	parsed.RawQuery = query.Encode()
+	return engine, pool, parsed.String()
+}
+
+func TestProcessRetryBackoffSurvivesSchedulerRestart(t *testing.T) {
+	engine, _, databaseURL := processTestEngine(t)
+	execution, err := durable.Start(t.Context(), engine, processDefinition, "retry-backoff")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler := startFixture(t, "scheduler", "retry-scheduler-A", databaseURL, "", durable.Claim{})
+	worker := startFixture(t, "worker", "retry-worker-A", databaseURL, "retry", durable.Claim{})
+	var due time.Time
+	waitProcessState(t, []*fixtureProcess{scheduler, worker}, func() bool {
+		activities, err := engine.Activities(t.Context(), execution.ID)
+		if err == nil && activities[0].State == durable.ActivityWaiting {
+			due = activities[0].AvailableAt
+			return true
+		}
+		return false
+	})
+	worker.kill(t)
+	scheduler.kill(t)
+	schedulerB := startFixture(t, "scheduler", "retry-scheduler-B", databaseURL, "", durable.Claim{})
+	workerB := startFixture(t, "worker", "retry-worker-B", databaseURL, "", durable.Claim{})
+	waitProcessState(t, []*fixtureProcess{schedulerB, workerB}, func() bool {
+		result, err := engine.Workflow(t.Context(), execution.ID)
+		return err == nil && result.State == durable.WorkflowCompleted
+	})
+	activities, err := engine.Activities(t.Context(), execution.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts, err := engine.Attempts(t.Context(), activities[0].ID)
+	if err != nil || len(attempts) != 2 || attempts[0].RetryDueAt == nil || !attempts[0].RetryDueAt.Equal(due) || attempts[1].StartedAt.Before(due) {
+		t.Fatalf("durable due time: %#v due=%s err=%v", attempts, due, err)
+	}
+	workerB.stop(t)
+	schedulerB.stop(t)
+	t.Logf("scheduler/worker restart preserved due=%s; second attempt started=%s", due, attempts[1].StartedAt)
+}
+
+func TestProcessHangingHandlerTimesOutWhileAnotherJobProgresses(t *testing.T) {
+	engine, pool, databaseURL := processTestEngine(t)
+	execution, err := durable.Start(t.Context(), engine, processDefinition, "hang")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler := startFixture(t, "scheduler", "deadline-scheduler", databaseURL, "", durable.Claim{})
+	worker := startFixture(t, "worker", "deadline-worker", databaseURL, "hang", durable.Claim{})
+	waitProcessState(t, []*fixtureProcess{scheduler, worker}, func() bool {
+		var ready bool
+		err := pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM fixture_barriers WHERE worker='deadline-worker')`).Scan(&ready)
+		return err == nil && ready
+	})
+	healthy, err := durable.Start(t.Context(), engine, processDefinition, "healthy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if t.Failed() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			for _, id := range []string{execution.ID, healthy.ID} {
+				state, err := engine.Workflow(ctx, id)
+				t.Logf("deadline diagnostic: %#v %v", state, err)
+			}
+		}
+	})
+	waitProcessState(t, []*fixtureProcess{scheduler, worker}, func() bool {
+		first, err1 := engine.Workflow(t.Context(), execution.ID)
+		last, err2 := engine.Workflow(t.Context(), healthy.ID)
+		return err1 == nil && err2 == nil && first.State == durable.WorkflowTimedOut && last.State == durable.WorkflowCompleted
+	})
+	result, err := engine.Workflow(t.Context(), execution.ID)
+	if err != nil || result.TerminalReason != "attempt_deadline" {
+		t.Fatalf("hang outcome: %#v %v", result, err)
+	}
+	worker.stop(t)
+	scheduler.stop(t)
+	t.Log("healthy heartbeats did not extend the hanging attempt; same worker completed another workflow")
+}
+
+func TestProcessRepeatedCrashesExhaustClaimBudget(t *testing.T) {
+	engine, pool, databaseURL := processTestEngine(t)
+	execution, err := durable.Start(t.Context(), engine, processDefinition, "crash-budget")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler := startFixture(t, "scheduler", "budget-scheduler", databaseURL, "", durable.Claim{})
+	for i := 1; i <= 3; i++ {
+		id := fmt.Sprintf("budget-worker-%d", i)
+		worker := startFixture(t, "worker", id, databaseURL, "before", durable.Claim{})
+		waitProcessState(t, []*fixtureProcess{scheduler, worker}, func() bool {
+			var ready bool
+			err := pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM fixture_barriers WHERE worker=$1)`, id).Scan(&ready)
+			return err == nil && ready
+		})
+		worker.kill(t)
+	}
+	waitProcessState(t, []*fixtureProcess{scheduler}, func() bool {
+		result, err := engine.Workflow(t.Context(), execution.ID)
+		return err == nil && result.State == durable.WorkflowFailed
+	})
+	result, err := engine.Workflow(t.Context(), execution.ID)
+	if err != nil || result.TerminalReason != "attempt_budget_exhausted" {
+		t.Fatalf("crash budget: %#v %v", result, err)
+	}
+	activities, err := engine.Activities(t.Context(), execution.ID)
+	if err != nil || activities[0].AttemptCount != 3 {
+		t.Fatalf("claims: %#v %v", activities, err)
+	}
+	scheduler.stop(t)
+	t.Log("three crashed worker processes exhausted the persisted claim budget")
 }

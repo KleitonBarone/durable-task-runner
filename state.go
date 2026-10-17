@@ -4,7 +4,7 @@ import "fmt"
 
 func ValidateWorkflowTransition(from, to WorkflowState) error {
 	allowed := map[WorkflowState]map[WorkflowState]bool{
-		WorkflowRunning: {WorkflowCompleted: true, WorkflowFailed: true},
+		WorkflowRunning: {WorkflowCompleted: true, WorkflowFailed: true, WorkflowTimedOut: true},
 	}
 	if !allowed[from][to] {
 		return fmt.Errorf("invalid workflow transition %q -> %q", from, to)
@@ -14,9 +14,10 @@ func ValidateWorkflowTransition(from, to WorkflowState) error {
 
 func ValidateActivityTransition(from, to ActivityState) error {
 	allowed := map[ActivityState]map[ActivityState]bool{
-		ActivityBlocked: {ActivityReady: true},
-		ActivityReady:   {ActivityRunning: true},
-		ActivityRunning: {ActivityReady: true, ActivityCompleted: true, ActivityFailed: true},
+		ActivityBlocked: {ActivityReady: true, ActivityTimedOut: true},
+		ActivityReady:   {ActivityRunning: true, ActivityFailed: true, ActivityTimedOut: true},
+		ActivityRunning: {ActivityReady: true, ActivityWaiting: true, ActivityCompleted: true, ActivityFailed: true, ActivityTimedOut: true},
+		ActivityWaiting: {ActivityReady: true, ActivityTimedOut: true},
 	}
 	if !allowed[from][to] {
 		return fmt.Errorf("invalid activity transition %q -> %q", from, to)
@@ -25,7 +26,7 @@ func ValidateActivityTransition(from, to ActivityState) error {
 }
 
 func ValidateAttemptTransition(from, to AttemptState) error {
-	if from != AttemptRunning || (to != AttemptCompleted && to != AttemptFailed && to != AttemptAbandoned) {
+	if from != AttemptRunning || (to != AttemptCompleted && to != AttemptFailed && to != AttemptAbandoned && to != AttemptTimedOut) {
 		return fmt.Errorf("invalid attempt transition %q -> %q", from, to)
 	}
 	return nil

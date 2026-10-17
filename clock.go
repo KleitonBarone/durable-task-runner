@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// Clock supplies timestamps for state transitions. Tests use ManualClock so
-// lease expiry never depends on wall-clock timing.
+// Clock controls runtime timers and injected test time. SystemClock uses
+// PostgreSQL time for durable mutations; ManualClock controls exact boundaries.
 type Clock interface {
 	Now() time.Time
 }
