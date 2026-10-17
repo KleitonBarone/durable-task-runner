@@ -12,13 +12,14 @@ import (
 )
 
 type Engine struct {
-	pool     *pgxpool.Pool
-	registry *Registry
-	clock    Clock
-	ownsPool bool
+	pool      *pgxpool.Pool
+	registry  *Registry
+	clock     Clock
+	ownsPool  bool
+	observers []Observer
 }
 
-func New(pool *pgxpool.Pool, registry *Registry, clock Clock) (*Engine, error) {
+func New(pool *pgxpool.Pool, registry *Registry, clock Clock, options ...EngineOption) (*Engine, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("PostgreSQL pool is required")
 	}
@@ -28,10 +29,17 @@ func New(pool *pgxpool.Pool, registry *Registry, clock Clock) (*Engine, error) {
 	if clock == nil {
 		return nil, fmt.Errorf("clock is required")
 	}
-	return &Engine{pool: pool, registry: registry, clock: clock}, nil
+	engine := &Engine{pool: pool, registry: registry, clock: clock}
+	for _, option := range options {
+		if option.observer == nil {
+			return nil, fmt.Errorf("observer is required")
+		}
+		engine.observers = append(engine.observers, option.observer)
+	}
+	return engine, nil
 }
 
-func Open(ctx context.Context, databaseURL string, registry *Registry, clock Clock) (*Engine, error) {
+func Open(ctx context.Context, databaseURL string, registry *Registry, clock Clock, options ...EngineOption) (*Engine, error) {
 	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("configure PostgreSQL: %w", err)
@@ -47,7 +55,7 @@ func Open(ctx context.Context, databaseURL string, registry *Registry, clock Clo
 		pool.Close()
 		return nil, fmt.Errorf("ping PostgreSQL: %w", err)
 	}
-	engine, err := New(pool, registry, clock)
+	engine, err := New(pool, registry, clock, options...)
 	if err != nil {
 		pool.Close()
 		return nil, err
@@ -139,27 +147,36 @@ func (e *Engine) start(ctx context.Context, definitionName, definitionVersion st
 	execution.DefinitionVersion = definition.version
 	execution.InputSchema = definition.inputSchema
 
-	inserted, err := tx.Exec(ctx, `
+	if key != nil {
+		inserted, err := tx.Exec(ctx, `INSERT INTO start_keys(definition_name,definition_version,start_key,execution_id,input_schema,created_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(definition_name,definition_version,start_key) DO NOTHING`, definitionName, definition.version, key, workflowID, definition.inputSchema, now)
+		if err != nil {
+			return WorkflowExecution{}, fmt.Errorf("persist start key: %w", err)
+		}
+		if inserted.RowsAffected() == 0 {
+			var existingID string
+			var matches bool
+			if err := tx.QueryRow(ctx, `SELECT k.execution_id,COALESCE(COALESCE(k.input,w.input)=$4::jsonb AND k.input_schema=$5,false) FROM start_keys k LEFT JOIN workflow_executions w ON w.id=k.execution_id WHERE k.definition_name=$1 AND k.definition_version=$2 AND k.start_key=$3`, definitionName, definition.version, key, encodedInput, definition.inputSchema).Scan(&existingID, &matches); err != nil {
+				return WorkflowExecution{}, fmt.Errorf("resolve start key: %w", payloadDatabaseError(err))
+			}
+			if !matches {
+				return WorkflowExecution{}, ErrStartConflict
+			}
+			if err := tx.Rollback(ctx); err != nil {
+				return WorkflowExecution{}, err
+			}
+			existing, err := e.Workflow(ctx, existingID)
+			if errors.Is(err, ErrNotFound) {
+				return WorkflowExecution{}, &ExecutionExpiredError{ID: existingID}
+			}
+			return existing, err
+		}
+	}
+	_, err = tx.Exec(ctx, `
 		INSERT INTO workflow_executions (id, definition_name, input, state, created_at, updated_at, start_key, timeout_ns, deadline_at, previous_execution_id,compensation_timeout_ns,definition_version,input_schema)
-		VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9,$10,$11,$12)
-		ON CONFLICT (definition_name,definition_version, start_key) DO NOTHING`,
+		VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9,$10,$11,$12)`,
 		workflowID, definitionName, encodedInput, WorkflowRunning, now, key, config.timeout, execution.DeadlineAt, config.previous, config.compensationTimeout, definition.version, definition.inputSchema)
 	if err != nil {
 		return WorkflowExecution{}, fmt.Errorf("persist workflow: %w", payloadDatabaseError(err))
-	}
-	if inserted.RowsAffected() == 0 {
-		var existingID string
-		var matches bool
-		if err := tx.QueryRow(ctx, `SELECT id, input = $3::jsonb AND input_schema=$5 FROM workflow_executions WHERE definition_name = $1 AND start_key = $2 AND definition_version=$4`, definitionName, key, encodedInput, definition.version, definition.inputSchema).Scan(&existingID, &matches); err != nil {
-			return WorkflowExecution{}, fmt.Errorf("resolve start key: %w", err)
-		}
-		if !matches {
-			return WorkflowExecution{}, ErrStartConflict
-		}
-		if err := tx.Rollback(ctx); err != nil {
-			return WorkflowExecution{}, fmt.Errorf("finish duplicate start: %w", err)
-		}
-		return e.Workflow(ctx, existingID)
 	}
 	if config.previous != nil {
 		var state WorkflowState
@@ -223,6 +240,7 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 	var currentState ActivityState
 	var policy RetryPolicy
 	var attemptTimeout time.Duration
+	var readyAt time.Time
 	names, versions, contracts, inputSchemas, outputSchemas := capabilityArrays(capabilities)
 	err = tx.QueryRow(ctx, `
 		SELECT a.id, a.workflow_id, a.name, a.input, a.attempt_count, a.state, a.step_key, a.position,a.kind,a.compensates_id,a.version,a.input_schema,a.output_schema
@@ -243,7 +261,7 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 	if err != nil {
 		return Claim{}, fmt.Errorf("select activity to claim: %w", err)
 	}
-	if err := tx.QueryRow(ctx, `SELECT state, attempt_count, retry_policy, attempt_timeout_ns FROM activities WHERE id=$1 FOR UPDATE`, claim.ActivityID).Scan(&currentState, &claim.AttemptNumber, &policy, &attemptTimeout); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT state, attempt_count, retry_policy, attempt_timeout_ns,available_at FROM activities WHERE id=$1 FOR UPDATE`, claim.ActivityID).Scan(&currentState, &claim.AttemptNumber, &policy, &attemptTimeout, &readyAt); err != nil {
 		return Claim{}, err
 	}
 	if currentState != ActivityReady {
@@ -311,6 +329,9 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 		return Claim{}, err
 	}
 	claim.WorkerID = workerID
+	if observed, ok := tx.(*observedTx); ok {
+		observed.readyAge = max(time.Duration(0), now.Sub(readyAt))
+	}
 	claim.ClaimedAt = now
 	claim.AttemptDeadline = minTime(now.Add(attemptTimeout), workflowDeadline)
 	claim.LeaseExpiresAt = minTime(now.Add(leaseDuration), claim.AttemptDeadline)
@@ -333,7 +354,7 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 		return Claim{}, fmt.Errorf("persist lease: %w", err)
 	}
 	if err := appendHistory(ctx, tx, claim.WorkflowID, &claim.ActivityID, &claim.AttemptID, "activity.claimed", map[string]any{
-		"attempt": claim.AttemptNumber, "version": claim.ActivityVersion, "lease_expires_at": claim.LeaseExpiresAt, "worker_id": workerID,
+		"attempt": claim.AttemptNumber, "version": claim.ActivityVersion, "step_key": claim.StepKey, "kind": claim.Kind, "lease_expires_at": claim.LeaseExpiresAt, "worker_id": workerID,
 	}, now); err != nil {
 		return Claim{}, err
 	}
@@ -511,7 +532,7 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 			if err := ValidateActivityTransition(ActivityBlocked, ActivityReady); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `UPDATE activities SET state = $2, updated_at = $3 WHERE id = $1`, nextActivityID, ActivityReady, now); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE activities SET state = $2, updated_at = $3,available_at=$3 WHERE id = $1`, nextActivityID, ActivityReady, now); err != nil {
 				return fmt.Errorf("schedule next activity: %w", err)
 			}
 			if err := appendHistory(ctx, tx, workflowID, &nextActivityID, nil, "activity.ready", map[string]any{}, now); err != nil {
@@ -553,6 +574,9 @@ func appendHistory(ctx context.Context, tx pgx.Tx, workflowID string, activityID
 		INSERT INTO execution_history (workflow_id, activity_id, attempt_id, event_type, details, recorded_at)
 		VALUES ($1, $2, $3, $4, $5, $6)`, workflowID, activityID, attemptID, eventType, encoded, at); err != nil {
 		return fmt.Errorf("append history event %q: %w", eventType, err)
+	}
+	if observed, ok := tx.(*observedTx); ok {
+		observed.record(workflowID, activityID, attemptID, eventType, encoded, at)
 	}
 	return nil
 }

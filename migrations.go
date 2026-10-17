@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -93,7 +94,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	if err != nil {
 		return fmt.Errorf("begin migration: %w", err)
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
+	defer rollbackSchemaTx(tx)
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, migrationLock); err != nil {
 		return fmt.Errorf("lock migrations: %w", err)
 	}
@@ -132,7 +133,15 @@ func (e *Engine) CheckSchema(ctx context.Context) error {
 }
 
 func (e *Engine) beginExecution(ctx context.Context) (pgx.Tx, error) {
-	return checkSchemaTransaction(ctx, e.pool, true)
+	started := time.Now()
+	tx, err := checkSchemaTransaction(ctx, e.pool, true)
+	if err != nil {
+		return nil, err
+	}
+	if len(e.observers) > 0 {
+		return &observedTx{Tx: tx, engine: e, started: started}, nil
+	}
+	return tx, nil
 }
 
 func checkSchemaTransaction(ctx context.Context, pool *pgxpool.Pool, current bool) (pgx.Tx, error) {
@@ -149,8 +158,14 @@ func checkSchemaTransaction(ctx context.Context, pool *pgxpool.Pool, current boo
 		}
 	}
 	if err != nil {
-		_ = tx.Rollback(context.Background())
+		rollbackSchemaTx(tx)
 		return nil, err
 	}
 	return tx, nil
+}
+
+func rollbackSchemaTx(tx pgx.Tx) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = tx.Rollback(ctx)
 }

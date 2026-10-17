@@ -166,6 +166,29 @@ func TestRecordedHistoriesMatchExecutionState(t *testing.T) {
 			if err := json.Unmarshal(raw, &recorded); err != nil {
 				t.Fatal(err)
 			}
+			if len(fixture.Events) != len(recorded.Events) {
+				t.Fatal("recorded event sequence changed")
+			}
+			// Additive detail fields preserve old history interpretation. Existing
+			// fields, event ordering, and projected outcomes must still agree.
+			for i := range fixture.Events {
+				var currentFields, recordedFields map[string]json.RawMessage
+				if err := json.Unmarshal(fixture.Events[i].Details, &currentFields); err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal(recorded.Events[i].Details, &recordedFields); err != nil {
+					t.Fatal(err)
+				}
+				for key := range currentFields {
+					if _, exists := recordedFields[key]; !exists {
+						delete(currentFields, key)
+					}
+				}
+				fixture.Events[i].Details, err = json.Marshal(currentFields)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
 			actualJSON, err := json.Marshal(fixture)
 			if err != nil {
 				t.Fatal(err)

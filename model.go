@@ -108,6 +108,7 @@ type WorkflowExecution struct {
 }
 
 type Activity struct {
+	Contract              string
 	Version               string
 	InputSchema           string
 	OutputSchema          string

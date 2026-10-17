@@ -40,7 +40,7 @@ func (e *Engine) Activities(ctx context.Context, workflowID string) ([]Activity,
 	}
 	rows, err := e.pool.Query(ctx, `
 		SELECT id, workflow_id, position, name, input, COALESCE(output, 'null'::jsonb), state, step_key,
-		       attempt_count, created_at, updated_at, completed_at, retry_policy, available_at, attempt_timeout_ns, last_error,kind,compensates_id,compensation,version,input_schema,output_schema
+		       attempt_count, created_at, updated_at, completed_at, retry_policy, available_at, attempt_timeout_ns, last_error,kind,compensates_id,compensation,version,input_schema,output_schema,contract
 		FROM activities WHERE workflow_id = $1 ORDER BY position`, workflowID)
 	if err != nil {
 		return nil, fmt.Errorf("read activities: %w", err)
@@ -56,6 +56,7 @@ func (e *Engine) Activities(ctx context.Context, workflowID string) ([]Activity,
 			&activity.RetryPolicy, &activity.AvailableAt, &activity.AttemptTimeout, &activity.LastError,
 			&activity.Kind, &activity.CompensatesActivityID, &activity.Compensation,
 			&activity.Version, &activity.InputSchema, &activity.OutputSchema,
+			&activity.Contract,
 		); err != nil {
 			return nil, fmt.Errorf("scan activity: %w", err)
 		}

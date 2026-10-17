@@ -504,6 +504,7 @@ func TestProcessRetryBackoffSurvivesSchedulerRestart(t *testing.T) {
 	workerB.stop(t)
 	schedulerB.stop(t)
 	t.Logf("scheduler/worker restart preserved due=%s; second attempt started=%s", due, attempts[1].StartedAt)
+	logProcessTimeline(t, engine, execution.ID)
 }
 
 func TestProcessHangingHandlerTimesOutWhileAnotherJobProgresses(t *testing.T) {
@@ -578,6 +579,20 @@ func TestProcessRepeatedCrashesExhaustClaimBudget(t *testing.T) {
 	}
 	scheduler.stop(t)
 	t.Log("three crashed worker processes exhausted the persisted claim budget")
+	logProcessTimeline(t, engine, execution.ID)
+}
+
+func logProcessTimeline(t *testing.T, engine *durable.Engine, workflowID string) {
+	t.Helper()
+	events, err := engine.Timeline(t.Context(), workflowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	types := make([]string, len(events))
+	for i, event := range events {
+		types[i] = event.Type
+	}
+	t.Logf("timeline=%v", types)
 }
 
 func TestProcessCancellationSurvivesWorkerAndSchedulerRestart(t *testing.T) {

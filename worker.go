@@ -114,7 +114,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	return w.runOnce(ctx)
 }
 
-func (w *Worker) runOnce(ctx context.Context) (bool, error) {
+func (w *Worker) runOnce(ctx context.Context) (didWork bool, runErr error) {
 	if !w.claimActive.CompareAndSwap(false, true) {
 		return false, ErrWorkerBusy
 	}
@@ -134,6 +134,12 @@ func (w *Worker) runOnce(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	defer func() {
+		var taskErr *TaskError
+		if !errors.As(runErr, &taskErr) && errors.Is(runErr, ErrLeaseLost) {
+			w.engine.observe(ctx, Observation{Type: "lease.lost", At: w.engine.clock.Now(), WorkflowID: claim.WorkflowID, ActivityID: claim.ActivityID, AttemptID: claim.AttemptID, WorkerID: claim.WorkerID, StepKey: claim.StepKey, Version: claim.ActivityVersion, Kind: claim.Kind, Outcome: "lost"})
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return true, err
 	}
@@ -155,12 +161,14 @@ func (w *Worker) runOnce(ctx context.Context) (bool, error) {
 	resultCh := make(chan result, 1)
 	w.handlerActive.Store(true)
 	go func() {
+		started := time.Now()
 		handlerResult := result{err: &HandlerPanicError{Value: "handler exited without returning"}}
 		defer func() {
 			if value := recover(); value != nil {
 				handlerResult.err = &HandlerPanicError{Value: value}
 			}
 			w.handlerActive.Store(false)
+			w.engine.observe(handlerCtx, Observation{Type: "handler.finished", At: w.engine.clock.Now(), WorkflowID: claim.WorkflowID, ActivityID: claim.ActivityID, AttemptID: claim.AttemptID, WorkerID: claim.WorkerID, StepKey: claim.StepKey, Version: claim.ActivityVersion, Kind: claim.Kind, Outcome: handlerOutcome(handlerResult.err), Duration: time.Since(started)})
 			resultCh <- handlerResult
 		}()
 		handlerResult.output, handlerResult.err = handler(handlerCtx, claim.ActivityInput)
@@ -231,7 +239,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		return ErrWorkerBusy
 	}
 	defer w.loopActive.Store(false)
-	return runtimeLoop(ctx, w.engine.clock, w.config.PollInterval, &w.health, w.runOnce)
+	return runtimeLoop(ctx, w.engine.clock, w.config.PollInterval, &w.health, w.runOnce, func(err error) { w.engine.runtimeError(ctx, err) })
 }
 
 func (w *Worker) recordFailure(ctx context.Context, claim Claim, cause error) error {

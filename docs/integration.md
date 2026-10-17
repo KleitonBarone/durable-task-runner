@@ -89,11 +89,15 @@ unacknowledged; the built-in worker records invalid handler output as task failu
 
 Without a key, starting twice creates two executions. Pass
 `durable.WithStartKey("request-42")` to `Start` to deduplicate concurrent calls
-within a workflow definition name and engine database/schema. Reusing the key
+within a workflow definition name/version and engine database/schema. Reusing the key
 with JSON-equivalent input returns the original execution, including terminal
 executions. Different input returns `ErrStartConflict`. Keys contain 1-200 UTF-8
-bytes without NUL and live as long as the execution row. There is no automatic
-retention. Keep keys private to the application; they are not authentication.
+bytes without NUL and remain reserved indefinitely. Optional terminal retention
+removes execution details but preserves the key and original input. A matching
+start after purge returns `ErrExecutionExpired` with its original execution ID;
+different input still conflicts. See [retention](operations.md#retention-and-start-keys)
+before choosing a data policy. Keep keys private to the application; they are not
+authentication.
 
 A start error may have followed a successful commit. Retry with the same key and
 input to resolve that ambiguity. Use a new key to intentionally start new work.
@@ -209,6 +213,12 @@ workflow deadline. Applications must still bound their own external calls.
 - `Engine.Timeline(ctx, id)` reads history in database sequence order.
 - `Engine.Attempts(ctx, activityID)` reads attempt numbers, workers, outcomes, and errors.
 
+These original APIs can return complete payloads or unbounded lists. Operator
+code should use the bounded `ListWorkflows`, `ListActivities`, `ListAttempts`,
+`ListLeases`, and `ListTimeline` APIs with `PageRequest`. Their default output
+redacts diagnostic text and excludes payloads and ownership tokens. See
+[operations](operations.md) for the CLI, sensitive-data choice, and cursor rules.
+
 A recovered activity has history such as:
 
 ```text
@@ -241,6 +251,11 @@ Declare optional cleanup with `WithCompensation(cleanupStep)` on a forward step.
 See [compensation behavior](compensation.md) for reverse order, independent limits,
 and ambiguous effects. Use explicit immutable versions for incompatible changes.
 See [upgrades](upgrades.md) for handler coexistence, draining, and schema checks.
+
+Optional terminal [retention](operations.md#retention-and-start-keys) deletes
+execution details and history. Reusing a purged start key returns
+`ExecutionExpiredError`, with its original ID, instead of starting new work.
+Conflicting input still returns `ErrStartConflict`.
 
 See [ADR 0002](decisions/0002-state-machine-and-failure-model.md) for transitions,
 invariants, and the side-effect/acknowledgement failure window, and

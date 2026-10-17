@@ -284,6 +284,43 @@ Branch: `feat/operations`. Prerequisite: 3A merged.
 Push every passing commit. Keep default installation small; optional diagnostics
 must not require another runtime service.
 
+The patched runtime prerequisite passed all five checks on `2b1353f`, installed
+from a fresh external module cache, and merged as PR #7 at `4381a33`.
+Checkpoint 35 adds bounded workflow/activity/attempt/lease/history pages and the
+operator CLI. The full check, race suite, and both vulnerability scans pass.
+Focused checks cover cursor upper bounds during new starts/progression, filters,
+deleted rows, redaction, schema upgrades, cancellation fencing, and separate
+original/cleanup failure inspection. Diagnostics, retention, benchmarks, and
+final operating procedures remain for this batch.
+
+Checkpoint 35 is `a9cb346` in PR #8 and passed all five CI checks. Checkpoints
+36 and 37 ship together with commit-only transition observers, monotonic handler
+timing, persisted ready-age measurement, redacted structured logs, runtime/lease
+diagnostics, and an optional OpenTelemetry adapter. Manual metric readers and
+in-memory span export verify measurement and finite labels without a collector.
+The full check, race suite, and ordinary/tagged-test vulnerability scans pass.
+Recorded fixture interpretation still passes with additive detail fields.
+
+Checkpoints 36/37 are `074bf1c`; `93f85a1` preserves a failure indicator when its
+error message is empty. Checkpoint 38 adds opt-in bounded terminal purges and
+independent start-key records. Input moves into the key record only on purge,
+preserving PostgreSQL JSON equality and indefinite deduplication. Tests protect
+active/cancelling/compensating work, retain predecessor links, backfill keyed older
+data, roll back failed starts/purges, and race starts and reads against deletion.
+Ten race-detector repetitions pass, as do the full check, full race suite, and
+vulnerability scans. Benchmark/load evidence and remaining operations docs follow.
+
+Checkpoint 38 is `321ca18`; checkpoint 39 is `9b381cf`. Claim/contention,
+100-activity recovery batches, and timeline growth benchmarks ran three times on
+the hardware recorded in `docs/benchmarks.md`. The four-worker load scenario
+completes 200 two-step jobs after 20 lost acknowledgements, with 220 first-step
+deliveries, 200 deduplicated effects, 20 abandoned attempts, and no active leases.
+The full check, full race suite, vulnerability scans, and runnable process
+demonstrations pass. Checkpoint 40 completes operating procedures and publishes
+captured crash, retry/exhaustion, cancellation, and cleanup timelines. The operator
+gate means diagnosis without writing SQL; the CLI still requires database access.
+Local health and telemetry cover database-outage diagnosis.
+
 ## Batch 4. Qualify the release
 
 Branch: `release/v1`. Prerequisite: 3B merged and all earlier gates still passing.
