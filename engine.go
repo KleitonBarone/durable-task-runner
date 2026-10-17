@@ -124,7 +124,7 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any, op
 		ON CONFLICT (definition_name, start_key) DO NOTHING`,
 		workflowID, definitionName, encodedInput, WorkflowRunning, now, key)
 	if err != nil {
-		return WorkflowExecution{}, fmt.Errorf("persist workflow: %w", err)
+		return WorkflowExecution{}, fmt.Errorf("persist workflow: %w", payloadDatabaseError(err))
 	}
 	if inserted.RowsAffected() == 0 {
 		var existingID string
@@ -156,7 +156,7 @@ func (e *Engine) start(ctx context.Context, definitionName string, input any, op
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9)`,
 			activityIDs[i], workflowID, i, spec.Name, spec.Input, state, now, spec.Key, spec.contract)
 		if err != nil {
-			return WorkflowExecution{}, fmt.Errorf("persist activity %d: %w", i, err)
+			return WorkflowExecution{}, fmt.Errorf("persist activity %d: %w", i, payloadDatabaseError(err))
 		}
 		if err := appendHistory(ctx, tx, workflowID, &activityIDs[i], nil, "activity.scheduled", map[string]any{
 			"name": spec.Name, "position": i, "state": state, "step_key": spec.Key,
@@ -382,7 +382,7 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 			return fmt.Errorf("complete attempt: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE activities SET state = $2, output = $3, updated_at = $4, completed_at = $4 WHERE id = $1`, claim.ActivityID, ActivityCompleted, output, now); err != nil {
-			return fmt.Errorf("complete activity: %w", err)
+			return fmt.Errorf("complete activity: %w", payloadDatabaseError(err))
 		}
 		if err := appendHistory(ctx, tx, workflowID, &claim.ActivityID, &claim.AttemptID, "activity.completed", map[string]any{"attempt": claim.AttemptNumber}, now); err != nil {
 			return err
@@ -411,7 +411,7 @@ func (e *Engine) finishActivity(ctx context.Context, claim Claim, output json.Ra
 				return err
 			}
 			if _, err := tx.Exec(ctx, `UPDATE workflow_executions SET state = $2, updated_at = $3, completed_at = $3, output = $5 WHERE id = $1 AND state = $4`, workflowID, WorkflowCompleted, now, WorkflowRunning, output); err != nil {
-				return fmt.Errorf("complete workflow: %w", err)
+				return fmt.Errorf("complete workflow: %w", payloadDatabaseError(err))
 			}
 			if err := appendHistory(ctx, tx, workflowID, nil, nil, "workflow.completed", map[string]any{}, now); err != nil {
 				return err

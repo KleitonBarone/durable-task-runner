@@ -2,14 +2,27 @@ package durable
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // MaxPayloadBytes limits each workflow input, step input, and step output before
 // persistence. JSON uses encoding/json and PostgreSQL jsonb semantics.
 const MaxPayloadBytes = 1 << 20
+
+// PostgreSQL rejects some JSON accepted by encoding/json, such as unpaired
+// UTF-16 surrogate escapes. Keep its cause while identifying invalid payloads.
+func payloadDatabaseError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && (pgErr.Code == "22P02" || pgErr.Code == "22P05" || pgErr.Code == "22003") {
+		return fmt.Errorf("%w: %w", ErrInvalidInput, err)
+	}
+	return err
+}
 
 func validatePayload(raw json.RawMessage) error {
 	if len(raw) > MaxPayloadBytes {

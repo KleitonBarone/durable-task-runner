@@ -195,6 +195,19 @@ func TestInvalidPayloadDoesNotPersistOrAcknowledge(t *testing.T) {
 	if err := engine.pool.QueryRow(ctx, `SELECT count(*) FROM workflow_executions`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("invalid start persisted: %d %v", count, err)
 	}
+	rawDefinition := Define("raw-json", func(input json.RawMessage) ([]ActivitySpec, error) {
+		step, err := NewActivity("raw", input)
+		return []ActivitySpec{step}, err
+	})
+	if err := Register(engine.registry, rawDefinition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Start(ctx, engine, rawDefinition, json.RawMessage(`"\ud800"`)); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("PostgreSQL-invalid workflow input: %v", err)
+	}
+	if err := engine.pool.QueryRow(ctx, `SELECT count(*) FROM workflow_executions`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("invalid JSON start persisted: %d %v", count, err)
+	}
 	execution, err := Start(ctx, engine, definition, integrationInput{Value: "valid"})
 	if err != nil {
 		t.Fatal(err)
@@ -205,6 +218,9 @@ func TestInvalidPayloadDoesNotPersistOrAcknowledge(t *testing.T) {
 	}
 	if err := engine.CompleteActivity(ctx, claim, json.RawMessage(`{`)); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("invalid completion: %v", err)
+	}
+	if err := engine.CompleteActivity(ctx, claim, json.RawMessage(`"\ud800"`)); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("PostgreSQL-invalid JSON completion: %v", err)
 	}
 	if err := engine.CompleteActivity(ctx, claim, json.RawMessage(`"ok"`)); err != nil {
 		t.Fatal(err)
