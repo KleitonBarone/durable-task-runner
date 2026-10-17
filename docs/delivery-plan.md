@@ -284,6 +284,15 @@ Branch: `feat/operations`. Prerequisite: 3A merged.
 Push every passing commit. Keep default installation small; optional diagnostics
 must not require another runtime service.
 
+The patched runtime prerequisite passed all five checks on `2b1353f`, installed
+from a fresh external module cache, and merged as PR #7 at `4381a33`.
+Checkpoint 35 adds bounded workflow/activity/attempt/lease/history pages and the
+operator CLI. The full check, race suite, and both vulnerability scans pass.
+Focused checks cover cursor upper bounds during new starts/progression, filters,
+deleted rows, redaction, schema upgrades, cancellation fencing, and separate
+original/cleanup failure inspection. Diagnostics, retention, benchmarks, and
+final operating procedures remain for this batch.
+
 ## Batch 4. Qualify the release
 
 Branch: `release/v1`. Prerequisite: 3B merged and all earlier gates still passing.

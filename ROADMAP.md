@@ -386,10 +386,10 @@ fixtures; upgrade and restore rehearsal.
 
 ### Deliverables
 
-- [ ] Add bounded cursor queries for workflows, attempts, leases, and timelines.
+- [x] Add bounded cursor queries for workflows, attempts, leases, and timelines.
   Filter status/definition and expose last error, age, retry due time, cancel reason,
   version mismatch, and compensation state. Ordinary diagnosis needs no raw SQL.
-- [ ] Add a small CLI for migration, status, attempts, timeline, and cancellation.
+- [x] Add a small CLI for migration, status, attempts, timeline, and cancellation.
   Definitions stay in application binaries; avoid a generic server or code loader.
 - [ ] Emit structured logs with execution, step, attempt, worker, and version IDs.
   Add opt-in metrics/tracing hooks and an optional OpenTelemetry adapter. Keep the

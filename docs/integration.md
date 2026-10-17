@@ -209,6 +209,12 @@ workflow deadline. Applications must still bound their own external calls.
 - `Engine.Timeline(ctx, id)` reads history in database sequence order.
 - `Engine.Attempts(ctx, activityID)` reads attempt numbers, workers, outcomes, and errors.
 
+These original APIs can return complete payloads or unbounded lists. Operator
+code should use the bounded `ListWorkflows`, `ListActivities`, `ListAttempts`,
+`ListLeases`, and `ListTimeline` APIs with `PageRequest`. Their default output
+redacts diagnostic text and excludes payloads and ownership tokens. See
+[operations](operations.md) for the CLI, sensitive-data choice, and cursor rules.
+
 A recovered activity has history such as:
 
 ```text
