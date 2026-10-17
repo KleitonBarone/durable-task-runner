@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Engine coordinates persisted executions. It is safe for concurrent operations.
 type Engine struct {
 	pool      *pgxpool.Pool
 	registry  *Registry
@@ -19,6 +20,8 @@ type Engine struct {
 	observers []Observer
 }
 
+// New uses an application-owned pool without doing I/O. Use SystemClock in
+// production. The first operation checks schema compatibility.
 func New(pool *pgxpool.Pool, registry *Registry, clock Clock, options ...EngineOption) (*Engine, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("PostgreSQL pool is required")
@@ -39,6 +42,8 @@ func New(pool *pgxpool.Pool, registry *Registry, clock Clock, options ...EngineO
 	return engine, nil
 }
 
+// Open creates and owns a pool, verifies connectivity, and accepts a known schema
+// prefix so the caller can apply pending migrations. It never migrates implicitly.
 func Open(ctx context.Context, databaseURL string, registry *Registry, clock Clock, options ...EngineOption) (*Engine, error) {
 	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
@@ -73,12 +78,14 @@ func Open(ctx context.Context, databaseURL string, registry *Registry, clock Clo
 	return engine, nil
 }
 
+// Close closes only a pool created by Open. Stop workers and the scheduler first.
 func (e *Engine) Close() {
 	if e != nil && e.ownsPool {
 		e.pool.Close()
 	}
 }
 
+// Migrate atomically applies pending embedded migrations under an exclusive lock.
 func (e *Engine) Migrate(ctx context.Context) error {
 	return Migrate(ctx, e.pool)
 }
@@ -219,6 +226,8 @@ func (e *Engine) start(ctx context.Context, definitionName, definitionVersion st
 	return execution, nil
 }
 
+// ClaimActivity is a low-level claim without handler capability filtering.
+// Prefer Worker, which claims only compatible registered handlers.
 func (e *Engine) ClaimActivity(ctx context.Context, workerID string, leaseDuration time.Duration) (Claim, error) {
 	return e.claimActivity(ctx, workerID, leaseDuration, nil)
 }
@@ -364,6 +373,8 @@ func (e *Engine) claimActivity(ctx context.Context, workerID string, leaseDurati
 	return claim, nil
 }
 
+// Heartbeat extends current ownership up to the attempt and phase deadlines.
+// An expired or fenced token returns ErrLeaseLost, including at exact expiry.
 func (e *Engine) Heartbeat(ctx context.Context, claim Claim, extension time.Duration) (time.Time, error) {
 	if extension <= 0 {
 		return time.Time{}, fmt.Errorf("heartbeat extension must be positive")
@@ -422,6 +433,8 @@ func (e *Engine) Heartbeat(ctx context.Context, claim Claim, extension time.Dura
 	return expiresAt, nil
 }
 
+// CompleteActivity atomically acknowledges current ownership, stores JSON output,
+// and advances the stored plan. A duplicate or stale acknowledgement is fenced.
 func (e *Engine) CompleteActivity(ctx context.Context, claim Claim, output json.RawMessage) error {
 	if len(output) == 0 {
 		output = json.RawMessage("null")
@@ -432,6 +445,7 @@ func (e *Engine) CompleteActivity(ctx context.Context, claim Claim, output json.
 	return e.finishActivity(ctx, claim, output, nil)
 }
 
+// FailActivity records a non-nil task failure and its persisted retry decision.
 func (e *Engine) FailActivity(ctx context.Context, claim Claim, activityErr error) error {
 	if activityErr == nil {
 		return fmt.Errorf("activity error is required")

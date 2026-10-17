@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+// StartOption configures start deduplication, phase deadlines, or reconciliation linkage.
 type StartOption struct {
 	kind, key           string
 	timeout             time.Duration
@@ -23,6 +24,7 @@ type StartOption struct {
 // ID. Retention never releases a start key for reuse.
 func WithStartKey(key string) StartOption { return StartOption{kind: "key", key: key} }
 
+// WithWorkflowTimeout bounds forward execution from its durable start. The default is 24 hours.
 func WithWorkflowTimeout(timeout time.Duration) StartOption {
 	return StartOption{kind: "timeout", timeout: timeout}
 }

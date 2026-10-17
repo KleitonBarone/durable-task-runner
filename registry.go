@@ -11,6 +11,7 @@ import (
 	"time"
 )
 
+// ActivitySpec is a serialized step declaration persisted as part of a plan.
 type ActivitySpec struct {
 	Name           string
 	Version        string
@@ -24,6 +25,8 @@ type ActivitySpec struct {
 	compensation   *CompensationPlan
 }
 
+// NewActivity constructs an untyped-output step. Prefer DefineActivity for typed
+// handlers and results. Omitted keys receive stable positional keys at start.
 func NewActivity[Input any](name string, input Input, options ...StepOption) (ActivitySpec, error) {
 	if strings.TrimSpace(name) == "" {
 		return ActivitySpec{}, fmt.Errorf("%w: activity name is required", ErrInvalidInput)
@@ -53,6 +56,8 @@ type Definition[Input any] struct {
 	Plan            func(Input) ([]ActivitySpec, error)
 }
 
+// Define declares a workflow plan. The plan must be deterministic and free of
+// side effects; duplicate keyed starts can evaluate it again before deduplication.
 func Define[Input any](name string, plan func(Input) ([]ActivitySpec, error)) Definition[Input] {
 	return Definition[Input]{Name: name, Version: defaultVersion, InputSchema: legacySchema, Plan: plan}
 }
@@ -71,16 +76,19 @@ type registeredDefinition struct {
 	encodePlan  func(any) (json.RawMessage, []ActivitySpec, error)
 }
 
+// Registry stores process-local definitions and compatible activity contracts.
 type Registry struct {
 	mu          sync.RWMutex
 	definitions map[string]registeredDefinition
 	activities  map[string]string
 }
 
+// NewRegistry creates an empty concurrency-safe registry.
 func NewRegistry() *Registry {
 	return &Registry{definitions: make(map[string]registeredDefinition), activities: make(map[string]string)}
 }
 
+// Register adds an immutable workflow name/version and rejects duplicate entries.
 func Register[Input any](registry *Registry, definition Definition[Input]) error {
 	if registry == nil {
 		return fmt.Errorf("registry is required")
@@ -191,6 +199,8 @@ func (r *Registry) bindActivities(contracts map[string]string) error {
 	return nil
 }
 
+// Start persists typed input, the full plan, and initial history atomically.
+// The definition must be registered. Use WithStartKey to resolve ambiguous commits.
 func Start[Input any](ctx context.Context, engine *Engine, definition Definition[Input], input Input, options ...StartOption) (WorkflowExecution, error) {
 	version := definition.Version
 	if version == "" && !definition.explicitVersion {
@@ -199,8 +209,10 @@ func Start[Input any](ctx context.Context, engine *Engine, definition Definition
 	return engine.start(ctx, definition.Name, version, input, options...)
 }
 
+// Handler is the low-level JSON handler form. Handlers must tolerate redelivery.
 type Handler func(context.Context, json.RawMessage) (json.RawMessage, error)
 
+// HandlerRegistration binds a handler to its durable compatibility identities.
 type HandlerRegistration struct {
 	Name            string
 	Version         string
@@ -211,6 +223,8 @@ type HandlerRegistration struct {
 	explicitVersion bool
 }
 
+// Handle adapts a Go handler without a typed declaration contract. Prefer an
+// ActivityDefinition's Handle method for capability filtering and typed results.
 func Handle[Input, Output any](name string, handler func(context.Context, Input) (Output, error)) HandlerRegistration {
 	if handler == nil {
 		return HandlerRegistration{Name: name}

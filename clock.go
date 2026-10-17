@@ -18,6 +18,7 @@ type TickerClock interface {
 	NewTicker(time.Duration) Ticker
 }
 
+// Ticker supplies coalesced runtime wakeups and must be stopped by its owner.
 type Ticker interface {
 	Ticks() <-chan time.Time
 	Stop()
@@ -34,10 +35,12 @@ func newTicker(clock Clock, interval time.Duration) Ticker {
 	return systemTicker{time.NewTicker(interval)}
 }
 
+// SystemClock uses host time for local diagnostics and PostgreSQL time for durable ownership.
 type SystemClock struct{}
 
 func (SystemClock) Now() time.Time { return time.Now().UTC() }
 
+// ManualClock controls durable timestamps and ticker wakeups in deterministic tests.
 type ManualClock struct {
 	mu      sync.RWMutex
 	now     time.Time

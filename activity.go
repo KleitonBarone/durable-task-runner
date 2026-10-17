@@ -13,6 +13,7 @@ type ActivityDefinition[Input, Output any] struct {
 	version, inputSchema, outputSchema string
 }
 
+// DefineActivity declares typed step inputs, handler outputs, and result reads.
 func DefineActivity[Input, Output any](name string) ActivityDefinition[Input, Output] {
 	return ActivityDefinition[Input, Output]{name: name, version: defaultVersion, inputSchema: legacySchema, outputSchema: legacySchema}
 }
@@ -74,6 +75,7 @@ func (a ActivityDefinition[Input, Output]) Step(key string, input Input, options
 	return spec, nil
 }
 
+// Handle binds the declaration's types and compatibility identities to a handler.
 func (a ActivityDefinition[Input, Output]) Handle(handler func(context.Context, Input) (Output, error)) HandlerRegistration {
 	registration := Handle(a.name, handler)
 	registration.contract = a.contract()

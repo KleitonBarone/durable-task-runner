@@ -323,6 +323,9 @@ Local health and telemetry cover database-outage diagnosis.
 
 ## Batch 4. Qualify the release
 
+PR #8 passed all five checks on `0cc1cdf`, installed the unchanged runtime from
+`9b381cf` in a fresh consumer cache with recovery, and merged at `df898c2`.
+
 Branch: `release/v1`. Prerequisite: 3B merged and all earlier gates still passing.
 
 | Commit | Proposed subject | Contents and evidence before push |
@@ -335,6 +338,14 @@ Push each passing commit and get the release PR's latest SHA green. All roadmap
 implementation checkboxes need test evidence before the release PR is ready.
 
 ## Tag and publication checkpoints
+
+Checkpoints 41-43 share the release qualification PR: compiled package examples,
+an explicit late-history progression rollback test, exact minimum-toolchain CI,
+the support/compatibility and private defect-reporting policy, release evidence,
+and prepared tagged installation/changelog docs. Full checks, race checks, and
+both vulnerability scans pass locally. The earlier dependency/security PR already
+implemented checkpoint 42's scanner. Candidate installation and final publication
+are still pending until the following checkpoints execute on the merged SHA.
 
 These are planned release actions, not extra empty commits. Publishing requires
 the user's release authorization and a merged, green release commit.

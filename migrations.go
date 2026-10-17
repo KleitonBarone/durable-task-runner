@@ -85,6 +85,8 @@ func migrationPrefix(ctx context.Context, tx pgx.Tx, known []migration, requireC
 	return count, nil
 }
 
+// Migrate checks the immutable migration catalog and atomically applies pending
+// SQL under an exclusive transaction lock. The pool's role must have DDL rights.
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	known, err := migrations()
 	if err != nil {

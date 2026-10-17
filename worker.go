@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+// WorkerConfig controls local ownership and shutdown. Zero durations select
+// defaults; DatabaseTimeout plus HeartbeatInterval must fit inside LeaseDuration.
 type WorkerConfig struct {
 	ID                  string
 	LeaseDuration       time.Duration
@@ -18,6 +20,7 @@ type WorkerConfig struct {
 	ShutdownGracePeriod time.Duration
 }
 
+// Worker runs one compatible handler at a time. Use multiple instances for concurrency.
 type Worker struct {
 	engine        *Engine
 	config        WorkerConfig
@@ -29,6 +32,8 @@ type Worker struct {
 	health        runtimeHealth
 }
 
+// NewWorker requires a nonblank ID and at least one handler. Defaults are a 30 s
+// lease, heartbeat at one third of it, 100 ms idle poll, and 5 s shutdown grace.
 func NewWorker(engine *Engine, config WorkerConfig, registrations ...HandlerRegistration) (*Worker, error) {
 	if engine == nil {
 		return nil, fmt.Errorf("engine is required")
@@ -234,6 +239,9 @@ func (w *Worker) runOnce(ctx context.Context) (didWork bool, runErr error) {
 	}
 }
 
+// Run continues after recorded task failures and cooperative lease loss. Runtime
+// failures use bounded reconnects. Cancellation requests handler shutdown within
+// the grace period; an unresponsive handler prevents another invocation.
 func (w *Worker) Run(ctx context.Context) error {
 	if !w.loopActive.CompareAndSwap(false, true) {
 		return ErrWorkerBusy
@@ -251,4 +259,5 @@ func (w *Worker) recordFailure(ctx context.Context, claim Claim, cause error) er
 	return &TaskError{WorkflowID: claim.WorkflowID, ActivityID: claim.ActivityID, AttemptID: claim.AttemptID, Cause: cause}
 }
 
+// Health describes this instance's Run loop. RunOnce does not maintain loop health.
 func (w *Worker) Health() RuntimeHealth { return w.health.snapshot() }

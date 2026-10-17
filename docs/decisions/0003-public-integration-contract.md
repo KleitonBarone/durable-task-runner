@@ -2,6 +2,10 @@
 
 Status: accepted for milestone 1B.
 
+Later decisions extend this baseline: ADR 0007 versions the identities, and
+ADR 0009 supersedes the original start-key lifetime with indefinite reservation
+across explicit terminal retention.
+
 The canonical Go module is `github.com/KleitonBarone/durable-task-runner`.
 Verification builds a temporary, separate consumer module. Local checks replace
 the module with the checkout; remote checks install an exact pushed revision into
