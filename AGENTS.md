@@ -2,9 +2,9 @@
 
 ## Project orientation
 
-Durable Task Runner explores how multi-step jobs survive retries, cancellation, and worker failure. Correct state transitions matter more than feature count.
+Durable Task Runner is a Go library for persisted linear jobs that survive worker failure. Correct state transitions matter more than feature count.
 
-Read `README.md` and `ROADMAP.md` before changing scope. Milestones through 3B are implemented. Release qualification is next. Describe release gates as pending until they pass.
+Read `README.md` and `ROADMAP.md` before changing scope. The bounded v1 roadmap is complete and v1.0.0 is published. Preserve its documented execution, compatibility, and retention contracts. New scope needs a new plan.
 
 ## Product rules
 

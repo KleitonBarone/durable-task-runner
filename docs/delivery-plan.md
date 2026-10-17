@@ -344,8 +344,12 @@ an explicit late-history progression rollback test, exact minimum-toolchain CI,
 the support/compatibility and private defect-reporting policy, release evidence,
 and prepared tagged installation/changelog docs. Full checks, race checks, and
 both vulnerability scans pass locally. The earlier dependency/security PR already
-implemented checkpoint 42's scanner. Candidate installation and final publication
-are still pending until the following checkpoints execute on the merged SHA.
+implemented checkpoint 42's scanner. PR #9 passed five checks on `fd34cf6` and
+merged at `91837ea`; that merged SHA passed five CI checks, full local verification,
+race verification, and both vulnerability scans. It was published first as
+`v1.0.0-rc.1`, then as `v1.0.0` after candidate qualification. Both annotated tags
+resolve to the same SHA. Fresh consumers and CLI installations at each tag passed;
+fresh checkouts completed the README quickstart. The bounded v1 delivery is complete.
 
 These are planned release actions, not extra empty commits. Publishing requires
 the user's release authorization and a merged, green release commit.

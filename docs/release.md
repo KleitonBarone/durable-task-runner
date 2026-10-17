@@ -1,8 +1,32 @@
 # Release qualification
 
-The bounded v1 scope is defined in [ROADMAP.md](../ROADMAP.md). Its implementation
-is complete through milestone 3B, merged at `df898c2` after five green CI checks
-on `0cc1cdf`. Candidate-tag and final-tag installation remain release gates.
+The bounded v1 scope in [ROADMAP.md](../ROADMAP.md) is complete.
+[v1.0.0](https://github.com/KleitonBarone/durable-task-runner/releases/tag/v1.0.0)
+and [v1.0.0-rc.1](https://github.com/KleitonBarone/durable-task-runner/releases/tag/v1.0.0-rc.1)
+both resolve to `91837eae7beeaab3c8067b9b5daf265a974bc911`. They are immutable
+annotated tags; no production deployment accompanied publication.
+
+## Publication evidence, 2026-10-17
+
+- Operations PR #8 passed five CI checks on `0cc1cdf` and merged at `df898c2`.
+- Release qualification PR #9 passed five CI checks on `fd34cf6` and merged at
+  `91837ea`. [Merged-commit CI](https://github.com/KleitonBarone/durable-task-runner/actions/runs/39046326768)
+  passed full Go 1.26.9/1.27 checks, race detection, native Windows, and security.
+- The merged SHA passed local full verification in 92.7 s and race verification
+  in 63.0 s, run concurrently on the Windows/WSL machine in the benchmark guide.
+  Ordinary and tagged-test vulnerability scans both reported no vulnerabilities.
+- Each tag installed into a new external consumer module with a fresh module
+  cache and no replacement. Separate worker/scheduler processes recovered the
+  abandoned owner's activity, recorded abandoned/completed attempts, deduplicated
+  two deliveries into one account effect, and completed the successor/result flow.
+- The operator CLI installed at each tag into isolated `GOBIN` and module caches
+  and ran successfully. Its PostgreSQL commands are covered by CLI integration CI.
+- Fresh candidate and final-tag checkouts ran the README's `up`, `example`, and
+  `down` commands. Each printed nine events ending in `workflow.completed` and the
+  typed sent-email result. The task-created development volumes were then removed.
+
+Public installation and remote peeled-tag SHAs were checked after publication.
+All roadmap gates are satisfied; the matrix below identifies the tests to retain.
 
 ## Evidence owned by each suite
 
