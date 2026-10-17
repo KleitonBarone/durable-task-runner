@@ -31,7 +31,7 @@ type WorkflowSummary struct {
 	Age               time.Duration
 	DeadlineAt        time.Time
 	TerminalReason    string
-	HasError          bool
+	HasError          bool   // Failure outcome or retained diagnostic text, even if redacted.
 	LastError         string `json:",omitempty"`
 	CancelActor       string `json:",omitempty"`
 	CancelReason      string `json:",omitempty"`
@@ -83,6 +83,7 @@ WHERE ($1='' OR w.id::text=$1) AND ($2='' OR w.state=$2) AND ($3='' OR w.definit
 		var name, version, state, kind *string
 		var due *time.Time
 		err := rows.Scan(&key, &item.ID, &item.DefinitionName, &item.DefinitionVersion, &item.State, &item.CreatedAt, &item.UpdatedAt, &item.CompletedAt, &item.DeadlineAt, &item.TerminalReason, &item.HasError, &item.LastError, &item.CancelActor, &item.CancelReason, &item.CancelRequestedAt, &item.CancelSettledAt, &item.OriginalState, &item.CompensationState, &item.CompensationError, &name, &version, &state, &kind, &due)
+		item.HasError = item.HasError || item.State == WorkflowFailed || item.State == WorkflowTimedOut || item.State == WorkflowCompensationFailed
 		item.Age = max(time.Duration(0), now.Sub(item.CreatedAt))
 		if name != nil {
 			item.NextActivity = &PendingActivity{*name, *version, ActivityState(*state), ActivityKind(*kind), *due}
