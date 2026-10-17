@@ -400,7 +400,7 @@ fixtures; upgrade and restore rehearsal.
 - [ ] Document health, PostgreSQL connection budgets, polling/batches, clock
   assumptions, TLS/credentials, and graceful deployment. Keep one scheduler as the
   operating model and test brief overlap safely.
-- [ ] Add opt-in terminal-execution retention with bounded deletion batches. Never
+- [x] Add opt-in terminal-execution retention with bounded deletion batches. Never
   delete active work. Remove related history intentionally under a documented policy,
   and preserve start-key deduplication for its promised lifetime.
 - [ ] Add repeatable database benchmarks for claims, contention, recovery batches,
@@ -412,7 +412,7 @@ fixtures; upgrade and restore rehearsal.
 ### Exit gate
 
 - [ ] An operator can explain why a job waits or stops without database access.
-- [ ] Test pagination under documented snapshot rules, redaction, retention racing
+- [x] Test pagination under documented snapshot rules, redaction, retention racing
   with reads, and deduplication lifetime.
 - [ ] A bounded load run has no duplicate active leases or unexplained stuck work.
   Diagnostics identify slow handlers, absent versions, and database outages.

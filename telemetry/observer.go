@@ -79,7 +79,7 @@ func (o *Observer) Observe(ctx context.Context, event durable.Observation) {
 // observation. Execution/worker/version identities belong to spans, never metrics.
 func eventType(value string) string {
 	switch value {
-	case "workflow.started", "workflow.completed", "workflow.failed", "workflow.timed_out", "workflow.cancel_requested", "workflow.cancelled", "workflow.compensating", "workflow.compensation_completed", "workflow.compensation_failed", "activity.scheduled", "compensation.scheduled", "activity.ready", "activity.claimed", "activity.completed", "activity.failed", "activity.timed_out", "activity.cancelled", "activity.retry_scheduled", "activity.recovered", "attempt.abandoned", "attempt.timed_out", "attempt.cancelled", "handler.finished", "lease.lost", "runtime.error":
+	case "workflow.purged", "workflow.started", "workflow.completed", "workflow.failed", "workflow.timed_out", "workflow.cancel_requested", "workflow.cancelled", "workflow.compensating", "workflow.compensation_completed", "workflow.compensation_failed", "activity.scheduled", "compensation.scheduled", "activity.ready", "activity.claimed", "activity.completed", "activity.failed", "activity.timed_out", "activity.cancelled", "activity.retry_scheduled", "activity.recovered", "attempt.abandoned", "attempt.timed_out", "attempt.cancelled", "handler.finished", "lease.lost", "runtime.error":
 		return value
 	default:
 		return "unknown"
@@ -88,7 +88,7 @@ func eventType(value string) string {
 
 func eventOutcome(value string) string {
 	switch value {
-	case "started", "completed", "failed", "timed_out", "cancel_requested", "cancelled", "compensating", "compensation_completed", "compensation_failed", "scheduled", "ready", "claimed", "retry_scheduled", "recovered", "abandoned", "success", "error", "panic", "lost", "fatal", "database", "schema", "deadline":
+	case "purged", "started", "completed", "failed", "timed_out", "cancel_requested", "cancelled", "compensating", "compensation_completed", "compensation_failed", "scheduled", "ready", "claimed", "retry_scheduled", "recovered", "abandoned", "success", "error", "panic", "lost", "fatal", "database", "schema", "deadline":
 		return value
 	default:
 		return "unknown"
@@ -99,7 +99,7 @@ func eventReason(value string) string {
 	switch value {
 	case "":
 		return "none"
-	case "handler_error", "permanent_error", "attempt_budget_exhausted", "attempt_deadline", "workflow_deadline", "compensation_deadline", "lease_expired", "cancelled", "forward_stopped", "retry_due":
+	case "retention", "handler_error", "permanent_error", "attempt_budget_exhausted", "attempt_deadline", "workflow_deadline", "compensation_deadline", "lease_expired", "cancelled", "forward_stopped", "retry_due":
 		return value
 	default:
 		return "unknown"

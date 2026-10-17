@@ -248,6 +248,11 @@ See [compensation behavior](compensation.md) for reverse order, independent limi
 and ambiguous effects. Use explicit immutable versions for incompatible changes.
 See [upgrades](upgrades.md) for handler coexistence, draining, and schema checks.
 
+Optional terminal [retention](operations.md#retention-and-start-keys) deletes
+execution details and history. Reusing a purged start key returns
+`ExecutionExpiredError`, with its original ID, instead of starting new work.
+Conflicting input still returns `ErrStartConflict`.
+
 See [ADR 0002](decisions/0002-state-machine-and-failure-model.md) for transitions,
 invariants, and the side-effect/acknowledgement failure window, and
 [ADR 0003](decisions/0003-public-integration-contract.md) for API guarantees.

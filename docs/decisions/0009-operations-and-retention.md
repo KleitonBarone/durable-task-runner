@@ -34,8 +34,8 @@ detail fields preserve earlier recorded transition interpretation.
 
 Terminal retention is opt-in, bounded, and serialized with workflow mutations.
 Active work is never deleted. Deletion intentionally removes activities, attempts,
-leases, payloads, and history. Keyed starts keep an independent deduplication
-record containing the original workflow identity and JSON input, preserving exact
+leases, workflow output, and history. Keyed workflow input moves to an independent
+deduplication record during deletion, preserving the original identity and exact
 PostgreSQL JSON equality without a lossy hash. The retained record contains input
 and must be included in the application's data policy. Reusing a purged key cannot
 start new work: matching input reports the original expired execution ID; different

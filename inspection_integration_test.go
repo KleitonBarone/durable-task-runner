@@ -122,7 +122,8 @@ func TestInspectionPagesBoundFilterAndRedact(t *testing.T) {
 }
 
 func TestTimelineCursorBoundsConcurrentProgressAndDeletedRows(t *testing.T) {
-	engine, definition := newIntegrationEngine(t, NewManualClock(time.Unix(1000, 0)), 1)
+	clock := NewManualClock(time.Unix(1000, 0))
+	engine, definition := newIntegrationEngine(t, clock, 1)
 	execution, err := Start(t.Context(), engine, definition, integrationInput{})
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +147,8 @@ func TestTimelineCursorBoundsConcurrentProgressAndDeletedRows(t *testing.T) {
 	if err != nil || len(newScan.Items) != 5 {
 		t.Fatalf("new scan: %#v %v", newScan, err)
 	}
-	if _, err := engine.pool.Exec(t.Context(), `DELETE FROM workflow_executions WHERE id=$1 AND state='completed'`, execution.ID); err != nil {
+	clock.Advance(time.Second)
+	if _, err := engine.PurgeTerminal(t.Context(), RetentionPolicy{CompletedBefore: clock.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	deleted, err := engine.ListTimeline(t.Context(), execution.ID, PageRequest{Cursor: page.NextCursor})

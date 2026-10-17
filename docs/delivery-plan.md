@@ -301,6 +301,15 @@ in-memory span export verify measurement and finite labels without a collector.
 The full check, race suite, and ordinary/tagged-test vulnerability scans pass.
 Recorded fixture interpretation still passes with additive detail fields.
 
+Checkpoints 36/37 are `074bf1c`; `93f85a1` preserves a failure indicator when its
+error message is empty. Checkpoint 38 adds opt-in bounded terminal purges and
+independent start-key records. Input moves into the key record only on purge,
+preserving PostgreSQL JSON equality and indefinite deduplication. Tests protect
+active/cancelling/compensating work, retain predecessor links, backfill keyed older
+data, roll back failed starts/purges, and race starts and reads against deletion.
+Ten race-detector repetitions pass, as do the full check, full race suite, and
+vulnerability scans. Benchmark/load evidence and remaining operations docs follow.
+
 ## Batch 4. Qualify the release
 
 Branch: `release/v1`. Prerequisite: 3B merged and all earlier gates still passing.

@@ -147,27 +147,36 @@ func (e *Engine) start(ctx context.Context, definitionName, definitionVersion st
 	execution.DefinitionVersion = definition.version
 	execution.InputSchema = definition.inputSchema
 
-	inserted, err := tx.Exec(ctx, `
+	if key != nil {
+		inserted, err := tx.Exec(ctx, `INSERT INTO start_keys(definition_name,definition_version,start_key,execution_id,input_schema,created_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(definition_name,definition_version,start_key) DO NOTHING`, definitionName, definition.version, key, workflowID, definition.inputSchema, now)
+		if err != nil {
+			return WorkflowExecution{}, fmt.Errorf("persist start key: %w", err)
+		}
+		if inserted.RowsAffected() == 0 {
+			var existingID string
+			var matches bool
+			if err := tx.QueryRow(ctx, `SELECT k.execution_id,COALESCE(COALESCE(k.input,w.input)=$4::jsonb AND k.input_schema=$5,false) FROM start_keys k LEFT JOIN workflow_executions w ON w.id=k.execution_id WHERE k.definition_name=$1 AND k.definition_version=$2 AND k.start_key=$3`, definitionName, definition.version, key, encodedInput, definition.inputSchema).Scan(&existingID, &matches); err != nil {
+				return WorkflowExecution{}, fmt.Errorf("resolve start key: %w", payloadDatabaseError(err))
+			}
+			if !matches {
+				return WorkflowExecution{}, ErrStartConflict
+			}
+			if err := tx.Rollback(ctx); err != nil {
+				return WorkflowExecution{}, err
+			}
+			existing, err := e.Workflow(ctx, existingID)
+			if errors.Is(err, ErrNotFound) {
+				return WorkflowExecution{}, &ExecutionExpiredError{ID: existingID}
+			}
+			return existing, err
+		}
+	}
+	_, err = tx.Exec(ctx, `
 		INSERT INTO workflow_executions (id, definition_name, input, state, created_at, updated_at, start_key, timeout_ns, deadline_at, previous_execution_id,compensation_timeout_ns,definition_version,input_schema)
-		VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9,$10,$11,$12)
-		ON CONFLICT (definition_name,definition_version, start_key) DO NOTHING`,
+		VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9,$10,$11,$12)`,
 		workflowID, definitionName, encodedInput, WorkflowRunning, now, key, config.timeout, execution.DeadlineAt, config.previous, config.compensationTimeout, definition.version, definition.inputSchema)
 	if err != nil {
 		return WorkflowExecution{}, fmt.Errorf("persist workflow: %w", payloadDatabaseError(err))
-	}
-	if inserted.RowsAffected() == 0 {
-		var existingID string
-		var matches bool
-		if err := tx.QueryRow(ctx, `SELECT id, input = $3::jsonb AND input_schema=$5 FROM workflow_executions WHERE definition_name = $1 AND start_key = $2 AND definition_version=$4`, definitionName, key, encodedInput, definition.version, definition.inputSchema).Scan(&existingID, &matches); err != nil {
-			return WorkflowExecution{}, fmt.Errorf("resolve start key: %w", err)
-		}
-		if !matches {
-			return WorkflowExecution{}, ErrStartConflict
-		}
-		if err := tx.Rollback(ctx); err != nil {
-			return WorkflowExecution{}, fmt.Errorf("finish duplicate start: %w", err)
-		}
-		return e.Workflow(ctx, existingID)
 	}
 	if config.previous != nil {
 		var state WorkflowState

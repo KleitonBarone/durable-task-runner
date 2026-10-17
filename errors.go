@@ -19,7 +19,17 @@ var (
 	ErrHandlerUnresponsive = errors.New("activity handler did not stop within shutdown grace period")
 	ErrExecutionDeadline   = errors.New("execution deadline exceeded")
 	ErrIncompatibleSchema  = errors.New("database schema is incompatible with this binary")
+	ErrExecutionExpired    = errors.New("execution was removed by retention")
 )
+
+// ExecutionExpiredError identifies a keyed execution whose details were purged.
+// The retained start key still prevents another execution from using that key.
+type ExecutionExpiredError struct{ ID string }
+
+func (e *ExecutionExpiredError) Error() string {
+	return fmt.Sprintf("%s: %s", ErrExecutionExpired, e.ID)
+}
+func (e *ExecutionExpiredError) Unwrap() error { return ErrExecutionExpired }
 
 // HandlerPanicError records an abnormal handler exit as a task failure. Panics
 // in goroutines created by application handlers remain the application's concern.

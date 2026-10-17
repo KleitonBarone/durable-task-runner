@@ -83,3 +83,41 @@ business lifetime independently of engine history.
 
 Enable [structured diagnostics and optional OpenTelemetry](observability.md) in
 your application to measure claim age, handler time, recovery, and runtime failures.
+
+## Retention and start keys
+
+The scheduler never deletes executions. An application can explicitly call:
+
+```go
+result, err := engine.PurgeTerminal(ctx, durable.RetentionPolicy{
+    CompletedBefore: cutoff,
+    Limit: 100,
+})
+```
+
+Supply a bounded context and a nonzero cutoff no later than the engine's current
+time. Only terminal executions completed strictly before the cutoff qualify.
+The default batch is 100 workflows, with a maximum of 500. Batches use workflow
+locks and skip work owned by another mutation. Running, retrying, cancelling,
+and compensating executions are protected. Repeat bounded calls according to
+your application's maintenance policy.
+
+Deletion removes workflow output, activities and their inputs/results, attempts,
+leases, and history in the same transaction. A batch counts workflows, so its
+related-row cost depends on plan/history size. Archive required audit records
+before purging. Existing predecessor links in other executions remain IDs without
+a foreign key; creating a new predecessor link still requires an available
+terminal execution.
+
+Start-key deduplication lasts indefinitely. For keyed executions, the original
+workflow input and schema identity move into an independent key record during
+purge. Input is stored once while the execution is live. A matching start after
+purge returns `ErrExecutionExpired`; use `errors.As` for `*ExecutionExpiredError`
+to read its original ID. Different JSON input or schema still conflicts. PostgreSQL
+JSON equality is preserved, including object key order and equivalent numbers.
+A purge cannot release a key for new work, even when it races with starts.
+
+The retained key record contains workflow input and belongs in your data policy.
+There is no key-expiration API in v1. Unkeyed executions leave no deduplication
+record. Application effect-key records have their own business lifetime and must
+survive as needed independently of engine retention and backup restore.

@@ -19,6 +19,8 @@ type StartOption struct {
 // WithStartKey deduplicates starts within a workflow name/version and database.
 // Reusing a key with JSON-equivalent input returns the original execution,
 // including terminal executions. A conflicting input returns ErrStartConflict.
+// After retention, matching input returns ExecutionExpiredError with the original
+// ID. Retention never releases a start key for reuse.
 func WithStartKey(key string) StartOption { return StartOption{kind: "key", key: key} }
 
 func WithWorkflowTimeout(timeout time.Duration) StartOption {
