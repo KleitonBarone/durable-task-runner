@@ -8,10 +8,10 @@ Use it for jobs such as imports or account provisioning where losing progress
 between steps would leave work unfinished. Your application supplies Go handlers;
 the engine stores progress and coordinates workers through PostgreSQL.
 
-The project is experimental. It supports bounded retries, execution deadlines,
+It supports bounded retries, execution deadlines,
 cooperative cancellation, explicit compensation, and versioned handlers.
 It includes [operator inspection](docs/operations.md) and optional telemetry.
-Release qualification remains. See the [roadmap to v1](ROADMAP.md).
+See [supported environments and limits](SUPPORT.md).
 
 ## Try it
 
@@ -19,7 +19,7 @@ You need Go 1.26.9 or later and Docker with Compose. PostgreSQL 17 runs locally
 through Compose.
 
 ```sh
-git clone https://github.com/KleitonBarone/durable-task-runner.git
+git clone --branch v1.0.0 https://github.com/KleitonBarone/durable-task-runner.git
 cd durable-task-runner
 go run ./cmd/dev up
 go run ./cmd/dev example
@@ -49,13 +49,13 @@ Start with the complete [Go example](cmd/example/main.go) and the
 Your application owns runtime configuration and lifecycle. PostgreSQL coordinates
 the processes.
 
-Install an exact pushed revision, replacing `<commit>` with its SHA:
+Install the tagged module:
 
 ```sh
-go get github.com/KleitonBarone/durable-task-runner@<commit>
+go get github.com/KleitonBarone/durable-task-runner@v1.0.0
 ```
 
-Separate consumer installation is verified. Release tags are planned.
+The integration guide includes separate worker and scheduler entry points.
 
 ## What survives a crash?
 
@@ -94,7 +94,7 @@ real worker processes, runs the example and a separate consumer module, and
 removes its test containers.
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) for focused tests, race checks, and debugging.
-See the [roadmap](ROADMAP.md) for the remaining work through v1.
+See the [roadmap](ROADMAP.md) and [release evidence](docs/release.md) for scope and verification.
 
 ## License
 

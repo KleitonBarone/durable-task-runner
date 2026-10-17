@@ -8,6 +8,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// RecoverAbandoned reconciles at most limit workflows with expired ownership,
+// deadlines, cancellation requests, or due retries. It returns reconciled work
+// items, which need not equal the workflow count. Prefer Scheduler for a run loop.
 func (e *Engine) RecoverAbandoned(ctx context.Context, limit int) (int, error) {
 	if limit <= 0 {
 		return 0, fmt.Errorf("recovery limit must be positive")

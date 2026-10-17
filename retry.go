@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// RetryPolicy is persisted per step. MaxAttempts includes crashes and defaults
+// to three. RetryErrors defaults to false; abandonment can still redeliver.
 type RetryPolicy struct {
 	MaxAttempts     int           `json:"max_attempts"`
 	RetryErrors     bool          `json:"retry_errors"`
@@ -21,13 +23,17 @@ type RetryPolicy struct {
 	JitterFraction  float64       `json:"jitter_fraction"`
 }
 
+// StepOption configures persisted retry, timeout, or cleanup behavior.
 type StepOption struct {
 	retry        *RetryPolicy
 	timeout      *time.Duration
 	compensation *ActivitySpec
 }
 
-func WithRetry(policy RetryPolicy) StepOption             { return StepOption{retry: &policy} }
+// WithRetry sets the step's finite claim budget and optional handler-error retries.
+func WithRetry(policy RetryPolicy) StepOption { return StepOption{retry: &policy} }
+
+// WithAttemptTimeout bounds each delivery, including heartbeats. The default is five minutes.
 func WithAttemptTimeout(timeout time.Duration) StepOption { return StepOption{timeout: &timeout} }
 
 // WithCompensation declares cleanup for this step if it completes before the

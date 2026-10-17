@@ -142,7 +142,8 @@ Test databases use the existing bridge network and temporary loopback ports.
 
 ## CI and failure diagnosis
 
-CI runs the same `check` command on Linux with Go 1.26 and 1.27. It repeats process
+CI runs the same `check` command on Linux with the exact Go 1.26.9 minimum and
+current Go 1.27 patches. It repeats process
 recovery and runs a separate race job with repeated claim/recovery cases. Native
 Windows checks formatting, static analysis, unit tests, and command/WSL selection.
 The security job runs `go run ./cmd/dev vuln`, with pinned govulncheck and a current

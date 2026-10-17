@@ -36,12 +36,16 @@ type Observation struct {
 type Observer interface {
 	Observe(context.Context, Observation)
 }
+
+// ObserverFunc adapts a concurrent, prompt callback to Observer.
 type ObserverFunc func(context.Context, Observation)
 
 func (f ObserverFunc) Observe(ctx context.Context, event Observation) { f(ctx, event) }
 
+// EngineOption configures optional engine diagnostics.
 type EngineOption struct{ observer Observer }
 
+// WithObserver adds a non-nil diagnostic observer. Multiple observers are allowed.
 func WithObserver(observer Observer) EngineOption { return EngineOption{observer: observer} }
 
 func (e *Engine) observe(ctx context.Context, event Observation) {

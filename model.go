@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// WorkflowState describes forward execution, cancellation, cleanup, or a terminal outcome.
 type WorkflowState string
 
 const (
@@ -18,8 +19,10 @@ const (
 	WorkflowCompensationFailed WorkflowState = "compensation_failed"
 )
 
+// ActivityState describes one persisted step's scheduling and execution state.
 type ActivityState string
 
+// ActivityKind distinguishes a forward step from its explicitly declared cleanup.
 type ActivityKind string
 
 const (
@@ -27,6 +30,7 @@ const (
 	ActivityCompensation ActivityKind = "compensation"
 )
 
+// CompensationState is independent of the original workflow failure or cancellation.
 type CompensationState string
 
 const (
@@ -60,6 +64,7 @@ const (
 	ActivityCancelled ActivityState = "cancelled"
 )
 
+// AttemptState describes one delivery; every claim consumes the activity's budget.
 type AttemptState string
 
 const (
@@ -71,6 +76,7 @@ const (
 	AttemptCancelled AttemptState = "cancelled"
 )
 
+// LeaseState records ownership release or expiry. Only active, unexpired leases acknowledge work.
 type LeaseState string
 
 const (
@@ -79,6 +85,8 @@ const (
 	LeaseExpired  LeaseState = "expired"
 )
 
+// WorkflowExecution is a persisted execution snapshot, including application data.
+// Use ListWorkflows for redacted operator summaries.
 type WorkflowExecution struct {
 	DefinitionVersion      string
 	InputSchema            string
@@ -107,6 +115,7 @@ type WorkflowExecution struct {
 	CompensationDeadlineAt *time.Time
 }
 
+// Activity is a persisted forward or cleanup step. ListActivities omits payloads.
 type Activity struct {
 	Contract              string
 	Version               string
@@ -133,6 +142,7 @@ type Activity struct {
 	LastError             string
 }
 
+// Attempt records a delivery's outcome, deadline, and retry decision.
 type Attempt struct {
 	ID            string
 	ActivityID    string
@@ -147,6 +157,7 @@ type Attempt struct {
 	DeadlineAt    time.Time
 }
 
+// Lease records ownership timing. ListLeases never returns its Token.
 type Lease struct {
 	ID          string
 	ActivityID  string
@@ -160,6 +171,8 @@ type Lease struct {
 	EndedAt     *time.Time
 }
 
+// Claim carries low-level delivery ownership. Keep LeaseToken private; it is a
+// fencing capability, not a stable identity for deduplicating external effects.
 type Claim struct {
 	ActivityVersion       string
 	InputSchema           string
@@ -182,6 +195,7 @@ type Claim struct {
 	AttemptDeadline       time.Time
 }
 
+// TimelineEvent records a committed transition in increasing sequence order.
 type TimelineEvent struct {
 	Sequence   int64
 	WorkflowID string

@@ -6,11 +6,14 @@ import (
 	"time"
 )
 
+// RetentionPolicy selects terminal executions strictly older than CompletedBefore.
+// The cutoff is required and cannot be in the future. Limit defaults to 100, maximum 500.
 type RetentionPolicy struct {
 	CompletedBefore time.Time
 	Limit           int
 }
 
+// RetentionResult identifies executions whose details were deleted atomically.
 type RetentionResult struct {
 	Deleted      int
 	ExecutionIDs []string

@@ -428,19 +428,19 @@ database connection; local health and telemetry diagnose a database outage.
 
 ## 4. Qualify and release v1
 
-- [ ] Run the matrix below through the same local/CI entry points. Keep one
+- [x] Run the matrix below through the same local/CI entry points. Keep one
   authoritative scenario per guarantee, supported by focused boundary tests.
 - [ ] Verify an external consumer against the candidate tag without local replacements.
   Run its quickstart and process recovery scenario.
-- [ ] Finish Go API documentation and examples. Keep the README short and link to
+- [x] Finish Go API documentation and examples. Keep the README short and link to
   integration, development, guarantees, operations, and upgrades. Compile examples
   and exercise runnable documentation commands in CI.
-- [ ] Publish supported Go/PostgreSQL/OS versions, deployment assumptions, payload
+- [x] Publish supported Go/PostgreSQL/OS versions, deployment assumptions, payload
   limits, retention/deduplication rules, and measured verification durations.
-- [ ] Review transitions, SQL constraints, transaction/history atomicity, lock order,
+- [x] Review transitions, SQL constraints, transaction/history atomicity, lock order,
   time authority, handler panics, and shutdown. Fix correctness defects before adding
   convenience features.
-- [ ] Run dependency/vulnerability checks and document defect reporting.
+- [x] Run dependency/vulnerability checks and document defect reporting.
 - [ ] Prepare a changelog, versioned notes, installation instructions, and compatibility
   policy. Publish a prerelease first. Tag v1 only when every gate passes. Publishing
   remains a separate release action.

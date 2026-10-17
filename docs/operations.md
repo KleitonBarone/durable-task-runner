@@ -7,8 +7,13 @@ patches. The CLI inspects engine state; it does not load handlers.
 
 ## Inspect with the CLI
 
-Install `github.com/KleitonBarone/durable-task-runner/cmd/durable` at the same
-revision as your application. Inside this checkout, use `go run ./cmd/durable`.
+Install the CLI at the same revision as your application:
+
+```sh
+go install github.com/KleitonBarone/durable-task-runner/cmd/durable@v1.0.0
+```
+
+Inside this checkout, use `go run ./cmd/durable`.
 Set `DATABASE_URL` for the database you intend to inspect. The CLI uses at most
 two connections and defaults to a ten-second operation deadline.
 

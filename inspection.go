@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+// WorkflowFilter combines optional exact matches and an exclusive creation cutoff.
 type WorkflowFilter struct {
 	ID                string
 	State             WorkflowState
@@ -43,6 +44,7 @@ type WorkflowSummary struct {
 	NextActivity      *PendingActivity
 }
 
+// PendingActivity identifies the first unfinished step, including version and retry due time.
 type PendingActivity struct {
 	Name        string
 	Version     string

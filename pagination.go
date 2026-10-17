@@ -19,6 +19,8 @@ type PageRequest struct {
 	Sensitive bool
 }
 
+// Page is one bounded live read. Continue with NextCursor and identical filters;
+// concurrent commits can change or remove rows between requests.
 type Page[T any] struct {
 	Items      []T    `json:"items"`
 	NextCursor string `json:"next_cursor,omitempty"`

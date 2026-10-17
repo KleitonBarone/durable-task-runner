@@ -1,7 +1,7 @@
 # Integrating the current engine
 
 This guide describes implemented behavior. Planned APIs and release gates live in
-[ROADMAP.md](../ROADMAP.md). The current API is experimental.
+[ROADMAP.md](../ROADMAP.md). See the [v1 compatibility policy](../SUPPORT.md).
 
 ## Start with a working program
 
@@ -12,11 +12,11 @@ starts an execution, runs its handlers, and prints the timeline. The shared type
 definitions and deduplicated fake service are in [workflow.go](../cmd/example/workflow.go).
 The final email step reads the account result through its handler context.
 
-Install an exact pushed revision with
-`go get github.com/KleitonBarone/durable-task-runner@<commit>`.
+Install the tagged module with
+`go get github.com/KleitonBarone/durable-task-runner@v1.0.0`.
 `go run ./cmd/dev consumer` builds and runs a separate consumer module. Set
-`DURABLE_CONSUMER_VERSION` to a pushed SHA to use a fresh module cache without
-local replacements. There is no release tag yet.
+`DURABLE_CONSUMER_VERSION` to a tag or pushed SHA to use a fresh module cache
+without local replacements.
 
 The default example starts worker and scheduler loops in one process and shuts
 them down after completion. For separate processes, start local PostgreSQL, set
