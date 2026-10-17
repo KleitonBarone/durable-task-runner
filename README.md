@@ -88,12 +88,12 @@ steps in reverse order and records cleanup failures separately.
 
 ## Development
 
-Run all checks with `go run ./cmd/dev check`. It starts disposable PostgreSQL,
-runs formatting, static analysis, unit and integration tests, kills and recovers
-real worker processes, runs the example and a separate consumer module, and
-removes its test containers.
+Run `go run ./cmd/dev check` for formatting, static analysis, unit/integration
+tests, process crash recovery, the example, a separate consumer, and snapshot
+restoration. It creates disposable PostgreSQL and removes its test containers.
+Run `go run ./cmd/dev race` and `go run ./cmd/dev vuln` separately.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for focused tests, race checks, and debugging.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for focused tests and debugging.
 See the [roadmap](ROADMAP.md) and [release evidence](docs/release.md) for scope and verification.
 
 ## License

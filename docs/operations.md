@@ -32,7 +32,7 @@ durable cancel -id <workflow-id> -actor operator -reason "customer requested"
 
 `retry_wait` is an activity state. Find its workflow with `status`, then inspect
 `NextActivity.State` and `AvailableAt`, or use `activities`. Workflow filters use
-the [workflow states](decisions/0002-state-machine-and-failure-model.md), including
+the [workflow states](state-machine.md#workflow-states), including
 `running`, `cancel_requested`, `compensating`, and terminal outcomes. A completed
 cleanup preserves its original failed, cancelled, or timed-out workflow outcome.
 

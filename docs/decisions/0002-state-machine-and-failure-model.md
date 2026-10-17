@@ -2,6 +2,8 @@
 
 Status: accepted, 2026-08-27
 
+For the consolidated v1 model, see [current execution states](../state-machine.md).
+
 This document records the milestone 1 baseline. [ADR 0004](0004-retries-deadlines-and-time.md)
 extends it with finite claim budgets, `retry_wait`, `timed_out`, and database time
 sampled after workflow-first locks. Those rules supersede unlimited recovery and
