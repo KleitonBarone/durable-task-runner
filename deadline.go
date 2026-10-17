@@ -2,7 +2,6 @@ package durable
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -18,7 +17,7 @@ func minTime(a, b time.Time) time.Time {
 // settleDeadline is called only after workflow and ownership rows are locked.
 func (e *Engine) settleDeadline(ctx context.Context, tx pgx.Tx, id, token string, now time.Time) (bool, error) {
 	var passed bool
-	err := tx.QueryRow(ctx, `SELECT w.deadline_at <= $2 OR (l.state='active' AND at.state='running' AND at.deadline_at <= $2) FROM workflow_executions w JOIN activities a ON a.workflow_id=w.id JOIN leases l ON l.activity_id=a.id JOIN attempts at ON at.id=l.attempt_id WHERE w.id=$1 AND l.token=$3`, id, now, token).Scan(&passed)
+	err := tx.QueryRow(ctx, `SELECT (CASE WHEN w.state='compensating' THEN w.compensation_deadline_at ELSE w.deadline_at END) <= $2 OR (l.state='active' AND at.state='running' AND at.deadline_at <= $2) FROM workflow_executions w JOIN activities a ON a.workflow_id=w.id JOIN leases l ON l.activity_id=a.id JOIN attempts at ON at.id=l.attempt_id WHERE w.id=$1 AND l.token=$3`, id, now, token).Scan(&passed)
 	if err != nil {
 		return false, err
 	}
@@ -94,8 +93,5 @@ func (e *Engine) timeoutWorkflow(ctx context.Context, tx pgx.Tx, id, reason stri
 	if err := stopActivities(ctx, tx, id, ActivityTimedOut, AttemptTimedOut, reason, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE workflow_executions SET state='timed_out',terminal_reason=$2,last_error=$2,updated_at=$3,completed_at=$3 WHERE id=$1 AND state='running'`, id, reason, now); err != nil {
-		return fmt.Errorf("time out workflow: %w", err)
-	}
-	return appendHistory(ctx, tx, id, nil, nil, "workflow.timed_out", map[string]any{"reason": reason}, now)
+	return e.beginCompensation(ctx, tx, id, WorkflowTimedOut, reason, reason, now)
 }

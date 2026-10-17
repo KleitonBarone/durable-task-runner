@@ -10,9 +10,10 @@ import (
 )
 
 type StartOption struct {
-	kind, key string
-	timeout   time.Duration
-	previous  string
+	kind, key           string
+	timeout             time.Duration
+	previous            string
+	compensationTimeout time.Duration
 }
 
 // WithStartKey deduplicates starts within a workflow definition name and database.
@@ -24,19 +25,26 @@ func WithWorkflowTimeout(timeout time.Duration) StartOption {
 	return StartOption{kind: "timeout", timeout: timeout}
 }
 
+// WithCompensationTimeout bounds cleanup from its activation, independently of
+// the forward workflow deadline. The default is 24 hours.
+func WithCompensationTimeout(timeout time.Duration) StartOption {
+	return StartOption{kind: "compensation_timeout", compensationTimeout: timeout}
+}
+
 // WithPredecessor links a new reconciliation execution to a terminal execution.
 // The identifier remains recorded if retention later removes the predecessor.
 func WithPredecessor(id string) StartOption { return StartOption{kind: "predecessor", previous: id} }
 
 type startConfig struct {
-	key      *string
-	timeout  time.Duration
-	previous *string
+	key                 *string
+	timeout             time.Duration
+	previous            *string
+	compensationTimeout time.Duration
 }
 
 func parseStartOptions(options []StartOption) (startConfig, error) {
-	config := startConfig{timeout: 24 * time.Hour}
-	timeoutSet := false
+	config := startConfig{timeout: 24 * time.Hour, compensationTimeout: 24 * time.Hour}
+	timeoutSet, compensationTimeoutSet := false, false
 	for _, option := range options {
 		switch {
 		case option.kind == "key" && config.key == nil:
@@ -51,6 +59,12 @@ func parseStartOptions(options []StartOption) (startConfig, error) {
 			}
 			config.timeout = option.timeout
 			timeoutSet = true
+		case option.kind == "compensation_timeout" && !compensationTimeoutSet:
+			if option.compensationTimeout < time.Microsecond || option.compensationTimeout > 365*24*time.Hour {
+				return config, fmt.Errorf("%w: cleanup timeout outside supported range", ErrInvalidInput)
+			}
+			config.compensationTimeout = option.compensationTimeout
+			compensationTimeoutSet = true
 		case option.kind == "predecessor" && config.previous == nil:
 			var id pgtype.UUID
 			if err := id.Scan(option.previous); err != nil || !id.Valid {

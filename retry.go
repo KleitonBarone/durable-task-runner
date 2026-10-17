@@ -7,6 +7,7 @@ import (
 	"hash/fnv"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -21,15 +22,20 @@ type RetryPolicy struct {
 }
 
 type StepOption struct {
-	retry   *RetryPolicy
-	timeout *time.Duration
+	retry        *RetryPolicy
+	timeout      *time.Duration
+	compensation *ActivitySpec
 }
 
 func WithRetry(policy RetryPolicy) StepOption             { return StepOption{retry: &policy} }
 func WithAttemptTimeout(timeout time.Duration) StepOption { return StepOption{timeout: &timeout} }
 
+// WithCompensation declares cleanup for this step if it completes before the
+// workflow stops. Cleanup input and policy are persisted with the forward plan.
+func WithCompensation(cleanup ActivitySpec) StepOption { return StepOption{compensation: &cleanup} }
+
 func normalizeActivity(spec *ActivitySpec, options []StepOption) error {
-	retrySet, timeoutSet := false, false
+	retrySet, timeoutSet, compensationSet := false, false, false
 	for _, option := range options {
 		switch {
 		case option.retry != nil && !retrySet:
@@ -41,6 +47,22 @@ func normalizeActivity(spec *ActivitySpec, options []StepOption) error {
 			}
 			spec.attemptTimeout = *option.timeout
 			timeoutSet = true
+		case option.compensation != nil && !compensationSet:
+			cleanup := *option.compensation
+			if cleanup.compensation != nil {
+				return fmt.Errorf("%w: cleanup cannot declare nested compensation", ErrInvalidInput)
+			}
+			if strings.TrimSpace(cleanup.Name) == "" {
+				return fmt.Errorf("%w: cleanup name is required", ErrInvalidInput)
+			}
+			if err := validatePayload(cleanup.Input); err != nil {
+				return err
+			}
+			if err := normalizeActivity(&cleanup, nil); err != nil {
+				return err
+			}
+			spec.compensation = &CompensationPlan{Name: cleanup.Name, Contract: cleanup.contract, Input: append([]byte(nil), cleanup.Input...), RetryPolicy: cleanup.policy, AttemptTimeout: cleanup.attemptTimeout}
+			compensationSet = true
 		default:
 			return fmt.Errorf("%w: duplicate or invalid step option", ErrInvalidInput)
 		}
@@ -108,7 +130,8 @@ type delivery struct{ workflowID, activityID, attemptID, leaseID string }
 func (e *Engine) recordAttemptFailure(ctx context.Context, tx pgx.Tx, d delivery, state AttemptState, message string, permanent bool, now time.Time) error {
 	var count int
 	var policy RetryPolicy
-	if err := tx.QueryRow(ctx, `SELECT attempt_count,retry_policy FROM activities WHERE id=$1`, d.activityID).Scan(&count, &policy); err != nil {
+	var kind ActivityKind
+	if err := tx.QueryRow(ctx, `SELECT attempt_count,retry_policy,kind FROM activities WHERE id=$1`, d.activityID).Scan(&count, &policy, &kind); err != nil {
 		return err
 	}
 	retry := count < policy.MaxAttempts && (state == AttemptAbandoned || (policy.RetryErrors && !permanent))
@@ -157,7 +180,7 @@ func (e *Engine) recordAttemptFailure(ctx context.Context, tx pgx.Tx, d delivery
 		if _, err := tx.Exec(ctx, `UPDATE activities SET state=$2,available_at=$3,last_error=$4,updated_at=$5 WHERE id=$1`, d.activityID, next, due, message, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE workflow_executions SET last_error=$2,updated_at=$3 WHERE id=$1`, d.workflowID, message, now); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE workflow_executions SET last_error=CASE WHEN state='compensating' THEN last_error ELSE $2 END,compensation_error=CASE WHEN state='compensating' THEN $2 ELSE compensation_error END,updated_at=$3 WHERE id=$1`, d.workflowID, message, now); err != nil {
 			return err
 		}
 		event := "activity.retry_scheduled"
@@ -186,15 +209,11 @@ func (e *Engine) recordAttemptFailure(ctx context.Context, tx pgx.Tx, d delivery
 	if err := appendHistory(ctx, tx, d.workflowID, &d.activityID, &d.attemptID, event, map[string]any{"error": message, "reason": reason}, now); err != nil {
 		return err
 	}
+	if kind == ActivityCompensation {
+		return e.failCompensation(ctx, tx, d.workflowID, reason, message, now)
+	}
 	if state == AttemptTimedOut {
 		return e.timeoutWorkflow(ctx, tx, d.workflowID, reason, now)
 	}
-	return failWorkflow(ctx, tx, d.workflowID, reason, message, now)
-}
-
-func failWorkflow(ctx context.Context, tx pgx.Tx, id, reason, message string, now time.Time) error {
-	if _, err := tx.Exec(ctx, `UPDATE workflow_executions SET state='failed',terminal_reason=$2,last_error=$3,updated_at=$4,completed_at=$4 WHERE id=$1 AND state='running'`, id, reason, message, now); err != nil {
-		return err
-	}
-	return appendHistory(ctx, tx, id, nil, nil, "workflow.failed", map[string]any{"reason": reason}, now)
+	return e.beginCompensation(ctx, tx, d.workflowID, WorkflowFailed, reason, message, now)
 }
