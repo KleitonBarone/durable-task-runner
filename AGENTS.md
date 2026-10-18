@@ -25,6 +25,16 @@ Start with one scheduler, worker processes, and one durable database. Do not add
 
 The runtime is Go 1.26.9 or later with PostgreSQL 17 and `pgx`. ADR 0008 supersedes ADR 0001's Go minimum after dependency/security verification. Keep the single-module shape described in `docs/decisions/0001-runtime-database-and-repository.md`. Prefer types that make invalid workflow and activity states difficult to represent.
 
+Keep the public library in the root `durable` package. Group related declarations
+in the existing concern files before adding another root file. See the repository
+map in `CONTRIBUTING.md` for source ownership.
+
+Put public API database scenarios in `tests/integration`, process scenarios in
+`tests/e2e`, and database benchmarks in `tests/benchmarks`. Keep unit tests and
+GoDoc examples beside the library. Root integration tests are reserved for private
+ownership races, migration internals, and history/type compatibility. Own test
+pools and clocks in fixtures; do not export engine internals to relocate a test.
+
 ## Verification
 
 Run the relevant checks before handing off changes:

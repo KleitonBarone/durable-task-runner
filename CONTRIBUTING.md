@@ -2,6 +2,36 @@
 
 [ROADMAP.md](ROADMAP.md) records implemented behavior and remaining acceptance gates.
 
+## Repository map
+
+The repository has one Go module. Applications import the root `durable` package
+at `github.com/KleitonBarone/durable-task-runner`.
+
+| Location | What belongs here |
+| --- | --- |
+| Root Go files | Library implementation, unit tests, GoDoc examples, and tests that need private engine internals |
+| [`cmd/`](cmd/) | Development commands, operator CLI, and runnable example |
+| [`tests/integration/`](tests/integration/) | PostgreSQL scenarios using the public library API |
+| [`tests/e2e/`](tests/e2e/) | Separate worker and scheduler process scenarios |
+| [`tests/benchmarks/`](tests/benchmarks/) | Opt-in database benchmarks |
+| [`internal/testdb/`](internal/testdb/) | Shared disposable test schema setup |
+| [`telemetry/`](telemetry/) | Optional logging, metrics, and tracing adapters |
+| [`migrations/`](migrations/) and [`testdata/`](testdata/) | Embedded SQL and compatibility fixtures |
+| [`docs/`](docs/) | Integration and operations guides, release evidence, and decisions |
+
+Start in [`workflow.go`](workflow.go) for definitions and registration,
+[`activity.go`](activity.go) for typed steps and retry policies, and
+[`model.go`](model.go) for stored states and transition rules. Persistence and
+ownership live in [`engine.go`](engine.go). Worker and scheduler loops live in
+[`runtime.go`](runtime.go), recovery in [`recovery.go`](recovery.go), and result
+and timeline reads in [`inspection.go`](inspection.go). Cancellation, compensation,
+retention, migrations, clocks, and observation each keep their own source file.
+
+Keep new database behavior tests in `tests/integration` when public APIs can
+express the scenario. Root integration tests cover private ownership races,
+migration internals, and compatibility fixtures. Keep unit tests beside the code
+and GoDoc examples at the module root.
+
 ## Start with one command
 
 Install Go 1.26.9 or later and Docker with Compose, then run:
@@ -95,11 +125,12 @@ go run ./cmd/dev restore
 go run ./cmd/dev race
 ```
 
-`e2e` provisions an isolated database. A parent test starts worker and scheduler
-processes, synchronizes on persisted barriers, and kills a worker before or after
-its fake side effect. It verifies abandoned/completed attempts, duplicate delivery,
-stale-token rejection, the next step, scheduler restart, and persistence through a
-new connection. A third scenario checks graceful shutdown during an activity.
+`e2e` defaults to `./tests/e2e` and provisions an isolated database. A parent test
+starts worker and scheduler processes, synchronizes on persisted barriers, and
+kills a worker before or after its fake side effect. It verifies abandoned/completed
+attempts, duplicate delivery, stale-token rejection, the next step, scheduler
+restart, and persistence through a new connection. A third scenario checks graceful
+shutdown during an activity.
 A fourth kills a worker after a deduplicated effect, verifies two deliveries share
 one effect key, and observes one committed effect.
 
@@ -115,7 +146,7 @@ verifies dependencies first. All test effects are local deterministic fakes.
 History fixtures live in `testdata/history`. Their recorded events are interpreted
 without invoking workflow code. To update them after reviewing an intentional
 compatibility change, set `DURABLE_UPDATE_HISTORY_FIXTURES=1` and run
-`go run ./cmd/dev e2e '-tags=integration' '-run=TestRecordedHistoriesMatchExecutionState' ./...`.
+`go run ./cmd/dev e2e '-tags=integration' '-run=TestRecordedHistoriesMatchExecutionState' .`.
 Inspect every fixture diff, then clear the variable. Ordinary checks never rewrite
 fixtures. Timestamps use UTC so fixtures are independent of the host time zone.
 
@@ -193,7 +224,8 @@ the exact minimum toolchain and current Go 1.27 patches.
 
 ## Database measurements
 
-For repeatable isolated database measurements, use `go run ./cmd/dev bench`.
+For repeatable isolated database measurements, use `go run ./cmd/dev bench`,
+which defaults to `./tests/benchmarks`.
 See [benchmarks](docs/benchmarks.md) for workload selection, recorded hardware and
 results, and the bounded recovery load test. Benchmarks are opt-in; correctness
 tests run in the normal `check` and `race` paths.
