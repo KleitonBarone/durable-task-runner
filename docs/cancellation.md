@@ -37,7 +37,7 @@ settlement. See [ADR 0005](decisions/0005-cancellation.md) for transaction rules
 Run the live-process demonstration with isolated PostgreSQL:
 
 ```sh
-go run ./cmd/dev e2e -run TestProcessCancellationSurvivesWorkerAndSchedulerRestart .
+go run ./cmd/dev e2e -run TestProcessCancellationSurvivesWorkerAndSchedulerRestart ./tests/e2e
 ```
 
 The fixture cancels after a fake effect, observes the handler's context stopping,

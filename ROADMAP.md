@@ -14,8 +14,9 @@ adds the reproducible `vuln` check. Final release scanning remains required.
 
 ## Post-v1 review fixes
 
-These corrections are being delivered on `fix/review-findings` after the published
-v1.0.0 tag. They preserve the bounded scope above; no release tag is moved.
+These corrections were merged in [PR #11](https://github.com/KleitonBarone/durable-task-runner/pull/11)
+after the published v1.0.0 tag. They preserve the bounded scope above; no release
+tag is moved.
 
 1. [x] `fix(recovery): preserve abandonment after scheduler downtime`. Compare
    stored lease expiry and attempt deadline; test forward and cleanup recovery,
@@ -27,8 +28,28 @@ v1.0.0 tag. They preserve the bounded scope above; no release tag is moved.
    through planning and execution while retaining wrong-type validation.
 
 Each fix includes focused failing-before/passing-after evidence, a reviewed commit,
-and a push. The final gate is `fmt`, `check`, `race`, `vuln`, and CI on the final
-pushed commit. The draft PR collects the fixes for review; publication is separate.
+and a push. Formatting, full verification, race detection, vulnerability scanning,
+and CI passed before merge. Publication is separate.
+
+## Post-v1 repository organization
+
+Deliver on `refactor/repository-layout` in a separate draft PR. Preserve the root
+import path, public API, state transitions, applied migrations, and history fixtures.
+
+1. [x] `test: organize integration and process suites`. Move public database tests,
+   process tests, and benchmarks into `tests/`; update development and CI selectors.
+   Compare test inventories and run the relocated suites and benchmark.
+2. [x] `refactor: consolidate related engine files`. Group related source and unit
+   tests by concern. Reduce root files from 82 to 40 and implementation files from
+   30 to 15. Compare all 210 production declarations before and after the moves.
+3. [x] `docs: explain repository layout and verification`. Add a contributor map
+   and test placement rules. Run the full verification and race suites, scan
+   dependencies, verify installation from the final pushed commit, and require
+   green CI on that commit.
+
+The [contributor map](CONTRIBUTING.md#repository-map) describes the resulting
+layout. This work changes file organization and test entry points; it adds no
+execution behavior or release tag.
 
 ## What completion means
 

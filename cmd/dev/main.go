@@ -124,7 +124,7 @@ func (a *app) run(ctx context.Context, args []string) error {
 		return a.withDatabase(ctx, func(ctx context.Context, db database) error {
 			arguments := append([]string{"-run=^$", "-bench=Benchmark", "-benchtime=3x", "-count=3"}, args[1:]...)
 			if len(args) == 1 {
-				arguments = append(arguments, ".")
+				arguments = append(arguments, "./tests/benchmarks")
 			}
 			return a.integration(ctx, db.url, arguments)
 		})

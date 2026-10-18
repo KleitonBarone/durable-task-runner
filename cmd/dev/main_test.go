@@ -50,6 +50,18 @@ func TestUnitCommandForwardsSelectionAndFailure(t *testing.T) {
 	}
 }
 
+func TestProcessCommandTargetsProcessSuite(t *testing.T) {
+	r := &fakeRunner{}
+	a := testApp(r)
+	if err := a.processTests(t.Context(), "postgres://test", nil); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"test", "-count=1", "-timeout=2m", "-tags=e2e", "-v", "-run=TestProcess", "./tests/e2e"}
+	if !reflect.DeepEqual(r.commands[0].args, want) {
+		t.Fatalf("process suite arguments = %v, want %v", r.commands[0].args, want)
+	}
+}
+
 func TestFormattingDifferenceFails(t *testing.T) {
 	r := &fakeRunner{respond: func(command) (string, error) { return "worker.go\n", nil }}
 	a := testApp(r)

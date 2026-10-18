@@ -9,7 +9,7 @@ line wrapping is added for readability, and event order is unchanged.
 ## Worker crash after an effect
 
 ```sh
-go run ./cmd/dev e2e '-run=TestProcessCrashRecovery' .
+go run ./cmd/dev e2e '-run=TestProcessCrashRecovery' ./tests/e2e
 ```
 
 The harness kills a worker before and after its effect, restarts the scheduler,
@@ -29,7 +29,7 @@ rejected stale acknowledgement are asserted, not inferred from process exit.
 ## Durable retry and exhaustion
 
 ```sh
-go run ./cmd/dev e2e '-run=TestProcessRetryBackoff|TestProcessRepeatedCrashes' .
+go run ./cmd/dev e2e '-run=TestProcessRetryBackoff|TestProcessRepeatedCrashes' ./tests/e2e
 ```
 
 The retry case restarts both processes during backoff and asserts the replacement
@@ -53,7 +53,7 @@ activity.recovered activity.claimed attempt.abandoned activity.failed workflow.f
 ## Cancellation through restart
 
 ```sh
-go run ./cmd/dev e2e '-run=TestProcessCancellation' .
+go run ./cmd/dev e2e '-run=TestProcessCancellation' ./tests/e2e
 ```
 
 The handler observes cancellation. After restarting both processes, no successor
@@ -68,7 +68,7 @@ workflow.cancelled]
 ## Cleanup crash and cleanup failure
 
 ```sh
-go run ./cmd/dev e2e '-run=TestProcessCompensation' .
+go run ./cmd/dev e2e '-run=TestProcessCompensation' ./tests/e2e
 ```
 
 After a forward failure, the harness kills the worker after its cleanup effect.

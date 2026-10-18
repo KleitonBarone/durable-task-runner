@@ -31,7 +31,7 @@ jobs:
       - name: Verify the complete development loop
         run: go run ./cmd/dev check
       - name: Repeat process recovery
-        run: go run ./cmd/dev e2e -count=2 -run=TestProcessCrashRecovery .
+        run: go run ./cmd/dev e2e -count=2 -run=TestProcessCrashRecovery ./tests/e2e
       - name: Retain failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -52,7 +52,7 @@ jobs:
           cache: true
       - run: go run ./cmd/dev race
       - name: Repeat concurrent claims and recovery
-        run: go run ./cmd/dev race -count=3 -run='TestConcurrentClaims|TestWorkerCrash|TestWorkerLeaseLoss|TestSchedulerRun' .
+        run: go run ./cmd/dev race -count=3 -run='TestConcurrentClaims|TestWorkerCrash|TestWorkerLeaseLoss|TestSchedulerRun' ./tests/integration
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
