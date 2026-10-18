@@ -1,6 +1,6 @@
 //go:build integration
 
-package durable
+package integration
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	durable "github.com/KleitonBarone/durable-task-runner"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -17,8 +18,8 @@ import (
 func TestWorkerReconnectsAfterTransientConnectionFailure(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	engine, definition := newIntegrationEngine(t, SystemClock{}, 1)
-	execution, err := Start(ctx, engine, definition, integrationInput{Value: "reconnect"})
+	engine, definition := newIntegrationEngine(t, durable.SystemClock{}, 1)
+	execution, err := durable.Start(ctx, engine.Engine, definition, integrationInput{Value: "reconnect"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,16 +38,16 @@ func TestWorkerReconnectsAfterTransientConnectionFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	clock := &runtimeClock{ManualClock: NewManualClock(execution.CreatedAt), created: make(chan time.Duration, 20)}
+	clock := &runtimeClock{ManualClock: durable.NewManualClock(execution.CreatedAt), created: make(chan time.Duration, 20)}
 	// Start and runtime must share persisted time, while connection waiting uses
 	// real context deadlines and bounded observation timeouts.
-	runtimeEngine, err := New(pool, engine.registry, clock)
+	runtimeEngine, err := newTestEngine(pool, engine.registry, clock)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// This verifies reconnect behavior, not connection/claim latency. Leave room
 	// for the real PostgreSQL round trips when other verification work is active.
-	worker, err := NewWorker(runtimeEngine, WorkerConfig{ID: "reconnect", DatabaseTimeout: 500 * time.Millisecond}, Handle("step_1", func(_ context.Context, input integrationInput) (string, error) { return input.Value, nil }))
+	worker, err := durable.NewWorker(runtimeEngine.Engine, durable.WorkerConfig{ID: "reconnect", DatabaseTimeout: 500 * time.Millisecond}, durable.Handle("step_1", func(_ context.Context, input integrationInput) (string, error) { return input.Value, nil }))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +69,7 @@ func TestWorkerReconnectsAfterTransientConnectionFailure(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if result.State == WorkflowCompleted && worker.Health().Healthy {
+		if result.State == durable.WorkflowCompleted && worker.Health().Healthy {
 			break
 		}
 		select {

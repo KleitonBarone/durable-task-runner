@@ -1,24 +1,26 @@
 //go:build integration
 
-package durable
+package integration
 
 import (
 	"errors"
 	"sync"
 	"testing"
 	"time"
+
+	durable "github.com/KleitonBarone/durable-task-runner"
 )
 
 func TestCancellationFencesOwnershipBeforeSettlement(t *testing.T) {
 	for _, phase := range []string{"before_claim", "running", "expired"} {
 		t.Run(phase, func(t *testing.T) {
-			clock := NewManualClock(time.Unix(1, 0))
+			clock := durable.NewManualClock(time.Unix(1, 0))
 			engine, definition := newIntegrationEngine(t, clock, 2)
-			execution, err := Start(t.Context(), engine, definition, integrationInput{})
+			execution, err := durable.Start(t.Context(), engine.Engine, definition, integrationInput{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			var claim Claim
+			var claim durable.Claim
 			if phase != "before_claim" {
 				claim, err = engine.ClaimActivity(t.Context(), "worker", time.Second)
 				if err != nil {
@@ -29,21 +31,21 @@ func TestCancellationFencesOwnershipBeforeSettlement(t *testing.T) {
 				clock.Advance(time.Second)
 			}
 			request, err := engine.Cancel(t.Context(), execution.ID, "operator", "stop import")
-			if err != nil || request.State != WorkflowCancelRequested || request.CancelActor != "operator" || request.CancelRequestedAt == nil || request.CancelSettledAt != nil {
+			if err != nil || request.State != durable.WorkflowCancelRequested || request.CancelActor != "operator" || request.CancelRequestedAt == nil || request.CancelSettledAt != nil {
 				t.Fatalf("request: %#v %v", request, err)
 			}
-			if _, err := engine.ClaimActivity(t.Context(), "later", time.Minute); !errors.Is(err, ErrNoActivity) {
+			if _, err := engine.ClaimActivity(t.Context(), "later", time.Minute); !errors.Is(err, durable.ErrNoActivity) {
 				t.Fatalf("claim after cancellation: %v", err)
 			}
 			if phase != "before_claim" {
-				if err := engine.CompleteActivity(t.Context(), claim, []byte(`"late"`)); !errors.Is(err, ErrLeaseLost) {
+				if err := engine.CompleteActivity(t.Context(), claim, []byte(`"late"`)); !errors.Is(err, durable.ErrLeaseLost) {
 					t.Fatal(err)
 				}
-				if _, err := engine.Heartbeat(t.Context(), claim, time.Minute); !errors.Is(err, ErrLeaseLost) {
+				if _, err := engine.Heartbeat(t.Context(), claim, time.Minute); !errors.Is(err, durable.ErrLeaseLost) {
 					t.Fatal(err)
 				}
 				attempts, err := engine.Attempts(t.Context(), claim.ActivityID)
-				if err != nil || len(attempts) != 1 || attempts[0].State != AttemptCancelled {
+				if err != nil || len(attempts) != 1 || attempts[0].State != durable.AttemptCancelled {
 					t.Fatalf("attempts: %#v %v", attempts, err)
 				}
 			}
@@ -57,7 +59,7 @@ func TestCancellationFencesOwnershipBeforeSettlement(t *testing.T) {
 				t.Fatalf("repeat settlement: %d %v", n, err)
 			}
 			result, err := engine.Workflow(t.Context(), execution.ID)
-			if err != nil || result.State != WorkflowCancelled || result.CancelReason != "stop import" || result.CancelSettledAt == nil {
+			if err != nil || result.State != durable.WorkflowCancelled || result.CancelReason != "stop import" || result.CancelSettledAt == nil {
 				t.Fatalf("settled: %#v %v", result, err)
 			}
 			activities, err := engine.Activities(t.Context(), execution.ID)
@@ -65,7 +67,7 @@ func TestCancellationFencesOwnershipBeforeSettlement(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, activity := range activities {
-				if activity.State != ActivityCancelled {
+				if activity.State != durable.ActivityCancelled {
 					t.Fatalf("activity: %#v", activity)
 				}
 			}
@@ -87,7 +89,7 @@ func TestCancellationFencesOwnershipBeforeSettlement(t *testing.T) {
 }
 
 func TestCancellationDuringRetryWaitStopsPromotion(t *testing.T) {
-	engine, clock, execution := retryExecution(t, RetryPolicy{RetryErrors: true, InitialInterval: time.Second})
+	engine, clock, execution := retryExecution(t, durable.RetryPolicy{RetryErrors: true, InitialInterval: time.Second})
 	claim, err := engine.ClaimActivity(t.Context(), "worker", time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +104,7 @@ func TestCancellationDuringRetryWaitStopsPromotion(t *testing.T) {
 	if _, err := engine.RecoverAbandoned(t.Context(), 10); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := engine.ClaimActivity(t.Context(), "later", time.Minute); !errors.Is(err, ErrNoActivity) {
+	if _, err := engine.ClaimActivity(t.Context(), "later", time.Minute); !errors.Is(err, durable.ErrNoActivity) {
 		t.Fatal(err)
 	}
 }
@@ -110,12 +112,12 @@ func TestCancellationDuringRetryWaitStopsPromotion(t *testing.T) {
 func TestCancellationRacesClaimAndCompletion(t *testing.T) {
 	for _, operation := range []string{"claim", "completion"} {
 		t.Run(operation, func(t *testing.T) {
-			engine, definition := newIntegrationEngine(t, NewManualClock(time.Unix(1, 0)), 1)
-			execution, err := Start(t.Context(), engine, definition, integrationInput{})
+			engine, definition := newIntegrationEngine(t, durable.NewManualClock(time.Unix(1, 0)), 1)
+			execution, err := durable.Start(t.Context(), engine.Engine, definition, integrationInput{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			var claim Claim
+			var claim durable.Claim
 			if operation == "completion" {
 				claim, err = engine.ClaimActivity(t.Context(), "first", time.Minute)
 				if err != nil {
@@ -147,7 +149,7 @@ func TestCancellationRacesClaimAndCompletion(t *testing.T) {
 			wg.Wait()
 			close(errs)
 			for err := range errs {
-				if err != nil && !errors.Is(err, ErrLeaseLost) && !errors.Is(err, ErrNoActivity) {
+				if err != nil && !errors.Is(err, durable.ErrLeaseLost) && !errors.Is(err, durable.ErrNoActivity) {
 					t.Fatal(err)
 				}
 			}
@@ -158,14 +160,14 @@ func TestCancellationRacesClaimAndCompletion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result.State != WorkflowCancelled && !(operation == "completion" && result.State == WorkflowCompleted) {
+			if result.State != durable.WorkflowCancelled && !(operation == "completion" && result.State == durable.WorkflowCompleted) {
 				t.Fatalf("race result: %#v", result)
 			}
-			if _, err := engine.ClaimActivity(t.Context(), "late", time.Minute); !errors.Is(err, ErrNoActivity) {
+			if _, err := engine.ClaimActivity(t.Context(), "late", time.Minute); !errors.Is(err, durable.ErrNoActivity) {
 				t.Fatal(err)
 			}
 			if claim.LeaseToken != "" {
-				if err := engine.CompleteActivity(t.Context(), claim, []byte(`"late"`)); !errors.Is(err, ErrLeaseLost) {
+				if err := engine.CompleteActivity(t.Context(), claim, []byte(`"late"`)); !errors.Is(err, durable.ErrLeaseLost) {
 					t.Fatal(err)
 				}
 			}
@@ -174,28 +176,28 @@ func TestCancellationRacesClaimAndCompletion(t *testing.T) {
 }
 
 func TestCancellationPreservesTerminalAndTimeoutOutcomes(t *testing.T) {
-	engine, clock, execution := deadlineExecution(t, time.Minute, WithWorkflowTimeout(time.Second))
+	engine, clock, execution := deadlineExecution(t, time.Minute, durable.WithWorkflowTimeout(time.Second))
 	clock.Advance(time.Second)
 	result, err := engine.Cancel(t.Context(), execution.ID, "operator", "late")
-	if err != nil || result.State != WorkflowTimedOut || result.CancelRequestedAt != nil || result.TerminalReason != "workflow_deadline" {
+	if err != nil || result.State != durable.WorkflowTimedOut || result.CancelRequestedAt != nil || result.TerminalReason != "workflow_deadline" {
 		t.Fatalf("deadline ordering: %#v %v", result, err)
 	}
 	result, err = engine.Cancel(t.Context(), execution.ID, "operator", "again")
-	if err != nil || result.State != WorkflowTimedOut {
+	if err != nil || result.State != durable.WorkflowTimedOut {
 		t.Fatalf("terminal: %#v %v", result, err)
 	}
-	if _, err := engine.Cancel(t.Context(), execution.ID, "", "invalid"); !errors.Is(err, ErrInvalidInput) {
+	if _, err := engine.Cancel(t.Context(), execution.ID, "", "invalid"); !errors.Is(err, durable.ErrInvalidInput) {
 		t.Fatal(err)
 	}
-	missing, _ := newID()
-	if _, err := engine.Cancel(t.Context(), missing, "operator", ""); !errors.Is(err, ErrNotFound) {
+	missing := "00000000-0000-4000-8000-000000000001"
+	if _, err := engine.Cancel(t.Context(), missing, "operator", ""); !errors.Is(err, durable.ErrNotFound) {
 		t.Fatal(err)
 	}
 }
 
 func TestCompletedExecutionIgnoresCancellation(t *testing.T) {
-	engine, definition := newIntegrationEngine(t, NewManualClock(time.Unix(1, 0)), 1)
-	execution, err := Start(t.Context(), engine, definition, integrationInput{})
+	engine, definition := newIntegrationEngine(t, durable.NewManualClock(time.Unix(1, 0)), 1)
+	execution, err := durable.Start(t.Context(), engine.Engine, definition, integrationInput{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,15 +209,15 @@ func TestCompletedExecutionIgnoresCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := engine.Cancel(t.Context(), execution.ID, "operator", "too late")
-	if err != nil || result.State != WorkflowCompleted || result.CancelRequestedAt != nil || string(result.Output) != `"done"` {
+	if err != nil || result.State != durable.WorkflowCompleted || result.CancelRequestedAt != nil || string(result.Output) != `"done"` {
 		t.Fatalf("completed cancellation: %#v %v", result, err)
 	}
 }
 
 func TestCancellationRacesExpiredLeaseRecovery(t *testing.T) {
-	clock := NewManualClock(time.Unix(1, 0))
+	clock := durable.NewManualClock(time.Unix(1, 0))
 	engine, definition := newIntegrationEngine(t, clock, 2)
-	execution, err := Start(t.Context(), engine, definition, integrationInput{})
+	execution, err := durable.Start(t.Context(), engine.Engine, definition, integrationInput{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,10 +239,10 @@ func TestCancellationRacesExpiredLeaseRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := engine.Workflow(t.Context(), execution.ID)
-	if err != nil || result.State != WorkflowCancelled {
+	if err != nil || result.State != durable.WorkflowCancelled {
 		t.Fatalf("recovery race: %#v %v", result, err)
 	}
-	if err := engine.CompleteActivity(t.Context(), claim, []byte(`"stale"`)); !errors.Is(err, ErrLeaseLost) {
+	if err := engine.CompleteActivity(t.Context(), claim, []byte(`"stale"`)); !errors.Is(err, durable.ErrLeaseLost) {
 		t.Fatal(err)
 	}
 	var active int
@@ -250,8 +252,8 @@ func TestCancellationRacesExpiredLeaseRecovery(t *testing.T) {
 }
 
 func TestCancellationRollsBackWhenHistoryCannotPersist(t *testing.T) {
-	engine, definition := newIntegrationEngine(t, NewManualClock(time.Unix(1, 0)), 2)
-	execution, err := Start(t.Context(), engine, definition, integrationInput{})
+	engine, definition := newIntegrationEngine(t, durable.NewManualClock(time.Unix(1, 0)), 2)
+	execution, err := durable.Start(t.Context(), engine.Engine, definition, integrationInput{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,11 +268,11 @@ func TestCancellationRollsBackWhenHistoryCannotPersist(t *testing.T) {
 		t.Fatal("history failure accepted")
 	}
 	result, err := engine.Workflow(t.Context(), execution.ID)
-	if err != nil || result.State != WorkflowRunning || result.CancelRequestedAt != nil {
+	if err != nil || result.State != durable.WorkflowRunning || result.CancelRequestedAt != nil {
 		t.Fatalf("partial request: %#v %v", result, err)
 	}
 	attempts, err := engine.Attempts(t.Context(), claim.ActivityID)
-	if err != nil || attempts[0].State != AttemptRunning {
+	if err != nil || attempts[0].State != durable.AttemptRunning {
 		t.Fatalf("partial attempt: %#v %v", attempts, err)
 	}
 	if _, err := engine.Heartbeat(t.Context(), claim, time.Minute); err != nil {

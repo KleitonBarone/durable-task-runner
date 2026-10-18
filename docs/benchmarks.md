@@ -3,8 +3,8 @@
 Run these benchmarks against an isolated PostgreSQL container:
 
 ```sh
-go run ./cmd/dev bench '-bench=BenchmarkClaim|BenchmarkTimeline' '-benchtime=100x' .
-go run ./cmd/dev bench '-bench=BenchmarkRecoveryBatch100' '-benchtime=3x' .
+go run ./cmd/dev bench '-bench=BenchmarkClaim|BenchmarkTimeline' '-benchtime=100x' ./tests/benchmarks
+go run ./cmd/dev bench '-bench=BenchmarkRecoveryBatch100' '-benchtime=3x' ./tests/benchmarks
 ```
 
 `bench` provisions and removes its own database. It defaults to three repetitions
@@ -38,7 +38,7 @@ They do not justify adding infrastructure or claiming linear scaling.
 ## Bounded recovery load
 
 ```sh
-go run ./cmd/dev e2e '-tags=integration' '-run=TestBoundedLoad' .
+go run ./cmd/dev e2e '-tags=integration' '-run=TestBoundedLoad' ./...
 ```
 
 This deterministic manual-clock test starts 200 two-step jobs, injects 20 first

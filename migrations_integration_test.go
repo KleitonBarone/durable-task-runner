@@ -211,3 +211,38 @@ func TestConcurrentAndInterruptedMigrations(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRetentionUpgradeBackfillsKeyedExecution(t *testing.T) {
+	pool := oldSchema(t, 11)
+	now := time.Unix(1000, 0).UTC()
+	clock := NewManualClock(now)
+	wid, _ := newID()
+	aid, _ := newID()
+	if _, err := pool.Exec(t.Context(), `INSERT INTO workflow_executions(id,definition_name,input,state,created_at,updated_at,deadline_at,start_key) VALUES($1,'integration_workflow','{"value":"kept"}','running',$2,$2,$2::timestamptz+interval '24 hours','legacy-key')`, wid, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `INSERT INTO activities(id,workflow_id,position,name,input,state,created_at,updated_at,available_at,step_key) VALUES($1,$2,0,'step_1','{"value":"kept"}','ready',$3,$3,$3,'step-0')`, aid, wid, now); err != nil {
+		t.Fatal(err)
+	}
+	registry := NewRegistry()
+	definition := integrationDefinition(1)
+	if err := Register(registry, definition); err != nil {
+		t.Fatal(err)
+	}
+	engine, _ := New(pool, registry, clock)
+	if err := engine.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	duplicate, err := Start(t.Context(), engine, definition, integrationInput{Value: "kept"}, WithStartKey("legacy-key"))
+	if err != nil || duplicate.ID != wid {
+		t.Fatalf("key upgrade: %#v %v", duplicate, err)
+	}
+	completeForwardSteps(t, engine, 1)
+	clock.Advance(time.Second)
+	if _, err := engine.PurgeTerminal(t.Context(), RetentionPolicy{CompletedBefore: clock.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Start(t.Context(), engine, definition, integrationInput{Value: "kept"}, WithStartKey("legacy-key")); !errors.Is(err, ErrExecutionExpired) {
+		t.Fatalf("legacy key was released: %v", err)
+	}
+}

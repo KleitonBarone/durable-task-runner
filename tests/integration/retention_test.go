@@ -1,6 +1,6 @@
 //go:build integration
 
-package durable
+package integration
 
 import (
 	"context"
@@ -9,19 +9,21 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	durable "github.com/KleitonBarone/durable-task-runner"
 )
 
 func TestRetentionPreservesKeysAndOnlyPurgesTerminalDetails(t *testing.T) {
-	clock := NewManualClock(time.Unix(1000, 0))
+	clock := durable.NewManualClock(time.Unix(1000, 0))
 	engine, _ := newIntegrationEngine(t, clock, 1)
-	definition := Define("retention-json", func(input json.RawMessage) ([]ActivitySpec, error) {
-		step, err := NewActivity("step", input)
-		return []ActivitySpec{step}, err
+	definition := durable.Define("retention-json", func(input json.RawMessage) ([]durable.ActivitySpec, error) {
+		step, err := durable.NewActivity("step", input)
+		return []durable.ActivitySpec{step}, err
 	})
-	if err := Register(engine.registry, definition); err != nil {
+	if err := durable.Register(engine.registry, definition); err != nil {
 		t.Fatal(err)
 	}
-	first, err := Start(t.Context(), engine, definition, json.RawMessage(`{"a":1,"b":[2]}`), WithStartKey("stable"))
+	first, err := durable.Start(t.Context(), engine.Engine, definition, json.RawMessage(`{"a":1,"b":[2]}`), durable.WithStartKey("stable"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,12 +34,12 @@ func TestRetentionPreservesKeysAndOnlyPurgesTerminalDetails(t *testing.T) {
 	if err := engine.CompleteActivity(t.Context(), claim, []byte(`"done"`)); err != nil {
 		t.Fatal(err)
 	}
-	active, err := Start(t.Context(), engine, definition, json.RawMessage(`{}`))
+	active, err := durable.Start(t.Context(), engine.Engine, definition, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	clock.Advance(time.Second)
-	result, err := engine.PurgeTerminal(t.Context(), RetentionPolicy{CompletedBefore: clock.Now(), Limit: 1})
+	result, err := engine.PurgeTerminal(t.Context(), durable.RetentionPolicy{CompletedBefore: clock.Now(), Limit: 1})
 	if err != nil || result.Deleted != 1 || result.ExecutionIDs[0] != first.ID {
 		t.Fatalf("purge: %#v %v", result, err)
 	}
@@ -58,40 +60,40 @@ func TestRetentionPreservesKeysAndOnlyPurgesTerminalDetails(t *testing.T) {
 			t.Fatalf("details retained in %s: %d %v", table, count, err)
 		}
 	}
-	_, err = Start(t.Context(), engine, definition, json.RawMessage(`{"b":[2.0],"a":1.00}`), WithStartKey("stable"))
-	var expired *ExecutionExpiredError
-	if !errors.Is(err, ErrExecutionExpired) || !errors.As(err, &expired) || expired.ID != first.ID {
+	_, err = durable.Start(t.Context(), engine.Engine, definition, json.RawMessage(`{"b":[2.0],"a":1.00}`), durable.WithStartKey("stable"))
+	var expired *durable.ExecutionExpiredError
+	if !errors.Is(err, durable.ErrExecutionExpired) || !errors.As(err, &expired) || expired.ID != first.ID {
 		t.Fatalf("expired key: %v", err)
 	}
-	if _, err := Start(t.Context(), engine, definition, json.RawMessage(`{"a":2,"b":[2]}`), WithStartKey("stable")); !errors.Is(err, ErrStartConflict) {
+	if _, err := durable.Start(t.Context(), engine.Engine, definition, json.RawMessage(`{"a":2,"b":[2]}`), durable.WithStartKey("stable")); !errors.Is(err, durable.ErrStartConflict) {
 		t.Fatalf("conflicting purged key: %v", err)
 	}
-	if err := engine.CompleteActivity(t.Context(), claim, []byte(`"late"`)); !errors.Is(err, ErrLeaseLost) {
+	if err := engine.CompleteActivity(t.Context(), claim, []byte(`"late"`)); !errors.Is(err, durable.ErrLeaseLost) {
 		t.Fatal(err)
 	}
-	result, err = engine.PurgeTerminal(t.Context(), RetentionPolicy{CompletedBefore: clock.Now(), Limit: 1})
+	result, err = engine.PurgeTerminal(t.Context(), durable.RetentionPolicy{CompletedBefore: clock.Now(), Limit: 1})
 	if err != nil || result.Deleted != 0 {
 		t.Fatalf("repeated purge: %#v %v", result, err)
 	}
-	for _, policy := range []RetentionPolicy{{}, {CompletedBefore: clock.Now(), Limit: 501}, {CompletedBefore: clock.Now().Add(time.Second)}} {
-		if _, err := engine.PurgeTerminal(t.Context(), policy); !errors.Is(err, ErrInvalidInput) {
+	for _, policy := range []durable.RetentionPolicy{{}, {CompletedBefore: clock.Now(), Limit: 501}, {CompletedBefore: clock.Now().Add(time.Second)}} {
+		if _, err := engine.PurgeTerminal(t.Context(), policy); !errors.Is(err, durable.ErrInvalidInput) {
 			t.Fatalf("invalid retention: %#v %v", policy, err)
 		}
 	}
 }
 
 func TestRetentionBatchProtectsPendingCancellationAndCleanup(t *testing.T) {
-	engine, clock, cleanupExecution := compensationExecution(t, RetryPolicy{})
+	engine, clock, cleanupExecution := compensationExecution(t, durable.RetryPolicy{})
 	completeForwardSteps(t, engine, 2)
 	failForward(t, engine)
 	definition := integrationDefinition(1)
-	worker, err := NewWorker(engine, WorkerConfig{ID: "batch"}, Handle("step_1", func(_ context.Context, input integrationInput) (string, error) { return input.Value, nil }))
+	worker, err := durable.NewWorker(engine.Engine, durable.WorkerConfig{ID: "batch"}, durable.Handle("step_1", func(_ context.Context, input integrationInput) (string, error) { return input.Value, nil }))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var completed []WorkflowExecution
+	var completed []durable.WorkflowExecution
 	for range 3 {
-		execution, err := Start(t.Context(), engine, definition, integrationInput{})
+		execution, err := durable.Start(t.Context(), engine.Engine, definition, integrationInput{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -100,11 +102,11 @@ func TestRetentionBatchProtectsPendingCancellationAndCleanup(t *testing.T) {
 		}
 		completed = append(completed, execution)
 	}
-	active, err := Start(t.Context(), engine, definition, integrationInput{}, WithPredecessor(completed[0].ID))
+	active, err := durable.Start(t.Context(), engine.Engine, definition, integrationInput{}, durable.WithPredecessor(completed[0].ID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cancelled, err := Start(t.Context(), engine, definition, integrationInput{})
+	cancelled, err := durable.Start(t.Context(), engine.Engine, definition, integrationInput{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,12 +115,12 @@ func TestRetentionBatchProtectsPendingCancellationAndCleanup(t *testing.T) {
 	}
 	clock.Advance(time.Second)
 	for _, want := range []int{2, 1, 0} {
-		result, err := engine.PurgeTerminal(t.Context(), RetentionPolicy{CompletedBefore: clock.Now(), Limit: 2})
+		result, err := engine.PurgeTerminal(t.Context(), durable.RetentionPolicy{CompletedBefore: clock.Now(), Limit: 2})
 		if err != nil || result.Deleted != want {
 			t.Fatalf("bounded deletion: %#v %v, want %d", result, err, want)
 		}
 	}
-	for id, want := range map[string]WorkflowState{active.ID: WorkflowRunning, cancelled.ID: WorkflowCancelRequested, cleanupExecution.ID: WorkflowCompensating} {
+	for id, want := range map[string]durable.WorkflowState{active.ID: durable.WorkflowRunning, cancelled.ID: durable.WorkflowCancelRequested, cleanupExecution.ID: durable.WorkflowCompensating} {
 		state, err := engine.Workflow(t.Context(), id)
 		if err != nil || state.State != want {
 			t.Fatalf("active phase removed: %#v %v", state, err)
@@ -130,48 +132,13 @@ func TestRetentionBatchProtectsPendingCancellationAndCleanup(t *testing.T) {
 	}
 }
 
-func TestRetentionUpgradeBackfillsKeyedExecution(t *testing.T) {
-	pool := oldSchema(t, 11)
-	now := time.Unix(1000, 0).UTC()
-	clock := NewManualClock(now)
-	wid, _ := newID()
-	aid, _ := newID()
-	if _, err := pool.Exec(t.Context(), `INSERT INTO workflow_executions(id,definition_name,input,state,created_at,updated_at,deadline_at,start_key) VALUES($1,'integration_workflow','{"value":"kept"}','running',$2,$2,$2::timestamptz+interval '24 hours','legacy-key')`, wid, now); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(t.Context(), `INSERT INTO activities(id,workflow_id,position,name,input,state,created_at,updated_at,available_at,step_key) VALUES($1,$2,0,'step_1','{"value":"kept"}','ready',$3,$3,$3,'step-0')`, aid, wid, now); err != nil {
-		t.Fatal(err)
-	}
-	registry := NewRegistry()
-	definition := integrationDefinition(1)
-	if err := Register(registry, definition); err != nil {
-		t.Fatal(err)
-	}
-	engine, _ := New(pool, registry, clock)
-	if err := engine.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	duplicate, err := Start(t.Context(), engine, definition, integrationInput{Value: "kept"}, WithStartKey("legacy-key"))
-	if err != nil || duplicate.ID != wid {
-		t.Fatalf("key upgrade: %#v %v", duplicate, err)
-	}
-	completeForwardSteps(t, engine, 1)
-	clock.Advance(time.Second)
-	if _, err := engine.PurgeTerminal(t.Context(), RetentionPolicy{CompletedBefore: clock.Now()}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Start(t.Context(), engine, definition, integrationInput{Value: "kept"}, WithStartKey("legacy-key")); !errors.Is(err, ErrExecutionExpired) {
-		t.Fatalf("legacy key was released: %v", err)
-	}
-}
-
 func TestKeyReservationAndPurgeAreAtomic(t *testing.T) {
-	clock := NewManualClock(time.Unix(1000, 0))
+	clock := durable.NewManualClock(time.Unix(1000, 0))
 	engine, definition := newIntegrationEngine(t, clock, 1)
 	if _, err := engine.pool.Exec(t.Context(), `CREATE FUNCTION reject_key_history() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected history failure'; END $$;CREATE TRIGGER key_history BEFORE INSERT ON execution_history FOR EACH ROW EXECUTE FUNCTION reject_key_history()`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Start(t.Context(), engine, definition, integrationInput{}, WithStartKey("atomic")); err == nil {
+	if _, err := durable.Start(t.Context(), engine.Engine, definition, integrationInput{}, durable.WithStartKey("atomic")); err == nil {
 		t.Fatal("failed start succeeded")
 	}
 	var count int
@@ -181,7 +148,7 @@ func TestKeyReservationAndPurgeAreAtomic(t *testing.T) {
 	if _, err := engine.pool.Exec(t.Context(), `DROP TRIGGER key_history ON execution_history`); err != nil {
 		t.Fatal(err)
 	}
-	execution, err := Start(t.Context(), engine, definition, integrationInput{}, WithStartKey("atomic"))
+	execution, err := durable.Start(t.Context(), engine.Engine, definition, integrationInput{}, durable.WithStartKey("atomic"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,11 +157,11 @@ func TestKeyReservationAndPurgeAreAtomic(t *testing.T) {
 	if _, err := engine.pool.Exec(t.Context(), `CREATE TRIGGER reject_purge BEFORE DELETE ON execution_history FOR EACH ROW EXECUTE FUNCTION reject_key_history()`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := engine.PurgeTerminal(t.Context(), RetentionPolicy{CompletedBefore: clock.Now()}); err == nil {
+	if _, err := engine.PurgeTerminal(t.Context(), durable.RetentionPolicy{CompletedBefore: clock.Now()}); err == nil {
 		t.Fatal("failed history deletion succeeded")
 	}
-	duplicate, err := Start(t.Context(), engine, definition, integrationInput{}, WithStartKey("atomic"))
-	if err != nil || duplicate.ID != execution.ID || duplicate.State != WorkflowCompleted {
+	duplicate, err := durable.Start(t.Context(), engine.Engine, definition, integrationInput{}, durable.WithStartKey("atomic"))
+	if err != nil || duplicate.ID != execution.ID || duplicate.State != durable.WorkflowCompleted {
 		t.Fatalf("failed purge changed deduplication: %#v %v", duplicate, err)
 	}
 	var copied bool
@@ -204,15 +171,15 @@ func TestKeyReservationAndPurgeAreAtomic(t *testing.T) {
 	if _, err := engine.pool.Exec(t.Context(), `DROP TRIGGER reject_purge ON execution_history`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := engine.PurgeTerminal(t.Context(), RetentionPolicy{CompletedBefore: clock.Now()}); err != nil {
+	if _, err := engine.PurgeTerminal(t.Context(), durable.RetentionPolicy{CompletedBefore: clock.Now()}); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestRetentionRacesKeyedStartsAndBoundedReads(t *testing.T) {
-	clock := NewManualClock(time.Unix(1000, 0))
+	clock := durable.NewManualClock(time.Unix(1000, 0))
 	engine, definition := newIntegrationEngine(t, clock, 1)
-	execution, err := Start(t.Context(), engine, definition, integrationInput{}, WithStartKey("race"))
+	execution, err := durable.Start(t.Context(), engine.Engine, definition, integrationInput{}, durable.WithStartKey("race"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +191,7 @@ func TestRetentionRacesKeyedStartsAndBoundedReads(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := engine.PurgeTerminal(t.Context(), RetentionPolicy{CompletedBefore: clock.Now(), Limit: 1})
+			_, err := engine.PurgeTerminal(t.Context(), durable.RetentionPolicy{CompletedBefore: clock.Now(), Limit: 1})
 			if err != nil {
 				errs <- err
 			}
@@ -234,8 +201,8 @@ func TestRetentionRacesKeyedStartsAndBoundedReads(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			duplicate, err := Start(t.Context(), engine, definition, integrationInput{}, WithStartKey("race"))
-			var expired *ExecutionExpiredError
+			duplicate, err := durable.Start(t.Context(), engine.Engine, definition, integrationInput{}, durable.WithStartKey("race"))
+			var expired *durable.ExecutionExpiredError
 			if err != nil {
 				if !errors.As(err, &expired) || expired.ID != execution.ID {
 					errs <- err
@@ -249,7 +216,7 @@ func TestRetentionRacesKeyedStartsAndBoundedReads(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := engine.ListTimeline(t.Context(), execution.ID, PageRequest{Limit: 1}); err != nil {
+			if _, err := engine.ListTimeline(t.Context(), execution.ID, durable.PageRequest{Limit: 1}); err != nil {
 				errs <- err
 			}
 		}()

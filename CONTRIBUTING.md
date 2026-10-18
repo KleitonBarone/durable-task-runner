@@ -72,14 +72,14 @@ In PowerShell, after starting the development dependency:
 
 ```powershell
 $env:DURABLE_TEST_DATABASE_URL = 'postgres://durable:durable@localhost:54329/durable?sslmode=disable'
-go run ./cmd/dev integration -run TestConcurrentClaims -count=20 .
+go run ./cmd/dev integration -run TestConcurrentClaims -count=20 ./tests/integration
 ```
 
 In a POSIX shell:
 
 ```sh
 export DURABLE_TEST_DATABASE_URL='postgres://durable:durable@localhost:54329/durable?sslmode=disable'
-go run ./cmd/dev integration -run TestConcurrentClaims -count=20 .
+go run ./cmd/dev integration -run TestConcurrentClaims -count=20 ./tests/integration
 ```
 
 The equivalent direct command is `go test -count=1 -tags=integration ./...`.
@@ -89,8 +89,8 @@ Each test owns a unique schema and drops only that schema.
 
 ```sh
 go run ./cmd/dev e2e
-go run ./cmd/dev e2e -run TestProcessCrashRecovery -count=3 .
-go run ./cmd/dev e2e -run TestProcessHandlerUpgradePreservesOldExecution .
+go run ./cmd/dev e2e -run TestProcessCrashRecovery -count=3 ./tests/e2e
+go run ./cmd/dev e2e -run TestProcessHandlerUpgradePreservesOldExecution ./tests/e2e
 go run ./cmd/dev restore
 go run ./cmd/dev race
 ```
@@ -115,7 +115,7 @@ verifies dependencies first. All test effects are local deterministic fakes.
 History fixtures live in `testdata/history`. Their recorded events are interpreted
 without invoking workflow code. To update them after reviewing an intentional
 compatibility change, set `DURABLE_UPDATE_HISTORY_FIXTURES=1` and run
-`go run ./cmd/dev e2e '-tags=integration' '-run=TestRecordedHistoriesMatchExecutionState' .`.
+`go run ./cmd/dev e2e '-tags=integration' '-run=TestRecordedHistoriesMatchExecutionState' ./...`.
 Inspect every fixture diff, then clear the variable. Ordinary checks never rewrite
 fixtures. Timestamps use UTC so fixtures are independent of the host time zone.
 
@@ -123,7 +123,7 @@ For the milestone 1A stress gate, this combines selected database and process ca
 in one isolated run. Quoting the complete flags works in both shells:
 
 ```sh
-go run ./cmd/dev e2e '-tags=integration,e2e' '-run=TestConcurrentClaims|TestWorkerCrash|TestProcessCrashRecovery|TestWorkerLeaseLoss|TestSchedulerRun' -count=20 -timeout=5m .
+go run ./cmd/dev e2e '-tags=integration,e2e' '-run=TestConcurrentClaims|TestWorkerCrash|TestProcessCrashRecovery|TestWorkerLeaseLoss|TestSchedulerRun' -count=20 -timeout=5m ./...
 ```
 
 ## Windows and WSL

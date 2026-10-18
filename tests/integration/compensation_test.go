@@ -1,6 +1,6 @@
 //go:build integration
 
-package durable
+package integration
 
 import (
 	"context"
@@ -9,23 +9,25 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	durable "github.com/KleitonBarone/durable-task-runner"
 )
 
-var compCreate = DefineActivity[string, string]("create")
-var compUndo = DefineActivity[string, string]("undo")
+var compCreate = durable.DefineActivity[string, string]("create")
+var compUndo = durable.DefineActivity[string, string]("undo")
 
-func compensationExecution(t *testing.T, policy RetryPolicy, options ...StartOption) (*Engine, *ManualClock, WorkflowExecution) {
+func compensationExecution(t *testing.T, policy durable.RetryPolicy, options ...durable.StartOption) (*integrationEngine, *durable.ManualClock, durable.WorkflowExecution) {
 	t.Helper()
-	clock := NewManualClock(time.Unix(1, 0))
+	clock := durable.NewManualClock(time.Unix(1, 0))
 	engine, _ := newIntegrationEngine(t, clock, 1)
-	definition := Define("compensation", func(_ string) ([]ActivitySpec, error) {
-		var steps []ActivitySpec
+	definition := durable.Define("compensation", func(_ string) ([]durable.ActivitySpec, error) {
+		var steps []durable.ActivitySpec
 		for _, key := range []string{"one", "two"} {
-			cleanup, err := compUndo.Step("cleanup", key, WithRetry(policy), WithAttemptTimeout(time.Second))
+			cleanup, err := compUndo.Step("cleanup", key, durable.WithRetry(policy), durable.WithAttemptTimeout(time.Second))
 			if err != nil {
 				return nil, err
 			}
-			step, err := compCreate.Step(key, key, WithCompensation(cleanup))
+			step, err := compCreate.Step(key, key, durable.WithCompensation(cleanup))
 			if err != nil {
 				return nil, err
 			}
@@ -35,27 +37,27 @@ func compensationExecution(t *testing.T, policy RetryPolicy, options ...StartOpt
 		if err != nil {
 			return nil, err
 		}
-		last, err := NewActivity("fail", "trigger", WithCompensation(ambiguous))
+		last, err := durable.NewActivity("fail", "trigger", durable.WithCompensation(ambiguous))
 		return append(steps, last), err
 	})
-	if err := Register(engine.registry, definition); err != nil {
+	if err := durable.Register(engine.registry, definition); err != nil {
 		t.Fatal(err)
 	}
-	execution, err := Start(t.Context(), engine, definition, "input", options...)
+	execution, err := durable.Start(t.Context(), engine.Engine, definition, "input", options...)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return engine, clock, execution
 }
 
-func completeForwardSteps(t *testing.T, engine *Engine, count int) {
+func completeForwardSteps(t *testing.T, engine *integrationEngine, count int) {
 	t.Helper()
 	for range count {
 		claim, err := engine.ClaimActivity(t.Context(), "forward", time.Minute)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if claim.Kind != ActivityForward {
+		if claim.Kind != durable.ActivityForward {
 			t.Fatalf("forward kind: %#v", claim)
 		}
 		if err := engine.CompleteActivity(t.Context(), claim, claim.ActivityInput); err != nil {
@@ -64,7 +66,7 @@ func completeForwardSteps(t *testing.T, engine *Engine, count int) {
 	}
 }
 
-func failForward(t *testing.T, engine *Engine) {
+func failForward(t *testing.T, engine *integrationEngine) {
 	t.Helper()
 	claim, err := engine.ClaimActivity(t.Context(), "forward", time.Minute)
 	if err != nil {
@@ -76,7 +78,7 @@ func failForward(t *testing.T, engine *Engine) {
 }
 
 func TestCompensationReverseOrderSurvivesEngineRestart(t *testing.T) {
-	engine, clock, execution := compensationExecution(t, RetryPolicy{})
+	engine, clock, execution := compensationExecution(t, durable.RetryPolicy{})
 	planned, err := engine.Activities(t.Context(), execution.ID)
 	if err != nil || len(planned) != 3 || planned[0].Compensation == nil || planned[0].Compensation.Name != "undo" {
 		t.Fatalf("persisted declaration: %#v %v", planned, err)
@@ -84,31 +86,31 @@ func TestCompensationReverseOrderSurvivesEngineRestart(t *testing.T) {
 	completeForwardSteps(t, engine, 2)
 	failForward(t, engine)
 	state, err := engine.Workflow(t.Context(), execution.ID)
-	if err != nil || state.State != WorkflowCompensating || state.OriginalState != WorkflowFailed || state.LastError != "forward failed" {
+	if err != nil || state.State != durable.WorkflowCompensating || state.OriginalState != durable.WorkflowFailed || state.LastError != "forward failed" {
 		t.Fatalf("trigger: %#v %v", state, err)
 	}
 	first, err := engine.ClaimActivity(t.Context(), "cleanup-A", time.Minute)
-	if err != nil || first.Kind != ActivityCompensation || string(first.ActivityInput) != `"two"` || first.CompensatesActivityID == nil || *first.CompensatesActivityID != planned[1].ID || first.ActivityID == planned[1].ID {
+	if err != nil || first.Kind != durable.ActivityCompensation || string(first.ActivityInput) != `"two"` || first.CompensatesActivityID == nil || *first.CompensatesActivityID != planned[1].ID || first.ActivityID == planned[1].ID {
 		t.Fatalf("reverse claim: %#v %v", first, err)
 	}
 	if err := engine.CompleteActivity(t.Context(), first, []byte(`"undone"`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.CompleteActivity(t.Context(), first, []byte(`"duplicate"`)); !errors.Is(err, ErrLeaseLost) {
+	if err := engine.CompleteActivity(t.Context(), first, []byte(`"duplicate"`)); !errors.Is(err, durable.ErrLeaseLost) {
 		t.Fatal(err)
 	}
-	restarted, err := New(engine.pool, NewRegistry(), clock)
+	restarted, err := newTestEngine(engine.pool, durable.NewRegistry(), clock)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var order []string
-	worker, err := NewWorker(restarted, WorkerConfig{ID: "cleanup-B"}, compUndo.Handle(func(ctx context.Context, key string) (string, error) {
+	worker, err := durable.NewWorker(restarted.Engine, durable.WorkerConfig{ID: "cleanup-B"}, compUndo.Handle(func(ctx context.Context, key string) (string, error) {
 		result, err := compCreate.Result(ctx, key)
 		if err != nil {
 			return "", err
 		}
-		metadata, ok := Metadata(ctx)
-		if !ok || metadata.Kind != ActivityCompensation || metadata.CompensatesActivityID == nil || metadata.EffectKey == "durable:"+planned[0].ID {
+		metadata, ok := durable.Metadata(ctx)
+		if !ok || metadata.Kind != durable.ActivityCompensation || metadata.CompensatesActivityID == nil || metadata.EffectKey == "durable:"+planned[0].ID {
 			return "", errors.New("invalid cleanup metadata")
 		}
 		order = append(order, result)
@@ -124,7 +126,7 @@ func TestCompensationReverseOrderSurvivesEngineRestart(t *testing.T) {
 		t.Fatal(order)
 	}
 	state, err = restarted.Workflow(t.Context(), execution.ID)
-	if err != nil || state.State != WorkflowFailed || state.CompensationState != CompensationCompleted || state.LastError != "forward failed" || state.TerminalReason != "handler_error" {
+	if err != nil || state.State != durable.WorkflowFailed || state.CompensationState != durable.CompensationCompleted || state.LastError != "forward failed" || state.TerminalReason != "handler_error" {
 		t.Fatalf("cleanup result: %#v %v", state, err)
 	}
 	activities, err := restarted.Activities(t.Context(), execution.ID)
@@ -134,7 +136,7 @@ func TestCompensationReverseOrderSurvivesEngineRestart(t *testing.T) {
 }
 
 func TestCompensationRedeliveryKeepsEffectIdentity(t *testing.T) {
-	engine, clock, execution := compensationExecution(t, RetryPolicy{})
+	engine, clock, execution := compensationExecution(t, durable.RetryPolicy{})
 	completeForwardSteps(t, engine, 2)
 	failForward(t, engine)
 	first, err := engine.ClaimActivity(t.Context(), "crashed", 500*time.Millisecond)
@@ -154,7 +156,7 @@ func TestCompensationRedeliveryKeepsEffectIdentity(t *testing.T) {
 	if len(effects) != 1 {
 		t.Fatal("cleanup effect was duplicated despite application deduplication")
 	}
-	if err := engine.CompleteActivity(t.Context(), first, []byte(`"stale"`)); !errors.Is(err, ErrLeaseLost) {
+	if err := engine.CompleteActivity(t.Context(), first, []byte(`"stale"`)); !errors.Is(err, durable.ErrLeaseLost) {
 		t.Fatal(err)
 	}
 	if err := engine.CompleteActivity(t.Context(), second, []byte(`"undone"`)); err != nil {
@@ -168,7 +170,7 @@ func TestCompensationRedeliveryKeepsEffectIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	state, err := engine.Workflow(t.Context(), execution.ID)
-	if err != nil || state.CompensationState != CompensationCompleted {
+	if err != nil || state.CompensationState != durable.CompensationCompleted {
 		t.Fatalf("result: %#v %v", state, err)
 	}
 }
@@ -176,7 +178,7 @@ func TestCompensationRedeliveryKeepsEffectIdentity(t *testing.T) {
 func TestCompensationExhaustionPreservesOriginalCause(t *testing.T) {
 	for _, failure := range []string{"handler", "crash"} {
 		t.Run(failure, func(t *testing.T) {
-			engine, clock, execution := compensationExecution(t, RetryPolicy{MaxAttempts: 2, RetryErrors: true})
+			engine, clock, execution := compensationExecution(t, durable.RetryPolicy{MaxAttempts: 2, RetryErrors: true})
 			completeForwardSteps(t, engine, 2)
 			failForward(t, engine)
 			for range 2 {
@@ -196,14 +198,14 @@ func TestCompensationExhaustionPreservesOriginalCause(t *testing.T) {
 				}
 			}
 			state, err := engine.Workflow(t.Context(), execution.ID)
-			if err != nil || state.State != WorkflowCompensationFailed || state.OriginalState != WorkflowFailed || state.LastError != "forward failed" || state.CompensationState != CompensationFailed || state.CompensationError == "" {
+			if err != nil || state.State != durable.WorkflowCompensationFailed || state.OriginalState != durable.WorkflowFailed || state.LastError != "forward failed" || state.CompensationState != durable.CompensationFailed || state.CompensationError == "" {
 				t.Fatalf("exhaustion: %#v %v", state, err)
 			}
-			if _, err := engine.ClaimActivity(t.Context(), "late", time.Minute); !errors.Is(err, ErrNoActivity) {
+			if _, err := engine.ClaimActivity(t.Context(), "late", time.Minute); !errors.Is(err, durable.ErrNoActivity) {
 				t.Fatal(err)
 			}
 			activities, err := engine.Activities(t.Context(), execution.ID)
-			if err != nil || activities[4].State != ActivityCancelled || activities[4].AttemptCount != 0 {
+			if err != nil || activities[4].State != durable.ActivityCancelled || activities[4].AttemptCount != 0 {
 				t.Fatalf("remaining cleanup: %#v %v", activities, err)
 			}
 		})
@@ -211,7 +213,7 @@ func TestCompensationExhaustionPreservesOriginalCause(t *testing.T) {
 }
 
 func TestCompensationOutlivesForwardDeadline(t *testing.T) {
-	engine, clock, execution := compensationExecution(t, RetryPolicy{}, WithWorkflowTimeout(time.Second), WithCompensationTimeout(10*time.Second))
+	engine, clock, execution := compensationExecution(t, durable.RetryPolicy{}, durable.WithWorkflowTimeout(time.Second), durable.WithCompensationTimeout(10*time.Second))
 	completeForwardSteps(t, engine, 2)
 	clock.Advance(time.Second)
 	if _, err := engine.RecoverAbandoned(t.Context(), 10); err != nil {
@@ -230,7 +232,7 @@ func TestCompensationOutlivesForwardDeadline(t *testing.T) {
 		}
 	}
 	state, err := engine.Workflow(t.Context(), execution.ID)
-	if err != nil || state.State != WorkflowTimedOut || state.CompensationState != CompensationCompleted || state.TerminalReason != "workflow_deadline" {
+	if err != nil || state.State != durable.WorkflowTimedOut || state.CompensationState != durable.CompensationCompleted || state.TerminalReason != "workflow_deadline" {
 		t.Fatalf("timeout cleanup: %#v %v", state, err)
 	}
 }
@@ -238,11 +240,11 @@ func TestCompensationOutlivesForwardDeadline(t *testing.T) {
 func TestCompensationDeadlineStopsCleanup(t *testing.T) {
 	for _, limit := range []string{"overall", "attempt"} {
 		t.Run(limit, func(t *testing.T) {
-			var options []StartOption
+			var options []durable.StartOption
 			if limit == "overall" {
-				options = append(options, WithCompensationTimeout(time.Second))
+				options = append(options, durable.WithCompensationTimeout(time.Second))
 			}
-			engine, clock, execution := compensationExecution(t, RetryPolicy{}, options...)
+			engine, clock, execution := compensationExecution(t, durable.RetryPolicy{}, options...)
 			completeForwardSteps(t, engine, 2)
 			failForward(t, engine)
 			claim, err := engine.ClaimActivity(t.Context(), "cleanup", time.Minute)
@@ -250,11 +252,11 @@ func TestCompensationDeadlineStopsCleanup(t *testing.T) {
 				t.Fatal(err)
 			}
 			clock.Advance(time.Second)
-			if err := engine.CompleteActivity(t.Context(), claim, []byte(`"late"`)); !errors.Is(err, ErrLeaseLost) {
+			if err := engine.CompleteActivity(t.Context(), claim, []byte(`"late"`)); !errors.Is(err, durable.ErrLeaseLost) {
 				t.Fatal(err)
 			}
 			state, err := engine.Workflow(t.Context(), execution.ID)
-			if err != nil || state.State != WorkflowCompensationFailed || state.LastError != "forward failed" {
+			if err != nil || state.State != durable.WorkflowCompensationFailed || state.LastError != "forward failed" {
 				t.Fatalf("cleanup limit: %#v %v", state, err)
 			}
 			want := "attempt_deadline"
@@ -269,7 +271,7 @@ func TestCompensationDeadlineStopsCleanup(t *testing.T) {
 }
 
 func TestCancellationDuringCompensationDoesNotCancelCleanup(t *testing.T) {
-	engine, _, execution := compensationExecution(t, RetryPolicy{})
+	engine, _, execution := compensationExecution(t, durable.RetryPolicy{})
 	completeForwardSteps(t, engine, 1)
 	forward, err := engine.ClaimActivity(t.Context(), "forward", time.Minute)
 	if err != nil {
@@ -282,7 +284,7 @@ func TestCancellationDuringCompensationDoesNotCancelCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	state, err := engine.Workflow(t.Context(), execution.ID)
-	if err != nil || state.State != WorkflowCompensating || state.OriginalState != WorkflowCancelled || state.CancelSettledAt != nil {
+	if err != nil || state.State != durable.WorkflowCompensating || state.OriginalState != durable.WorkflowCancelled || state.CancelSettledAt != nil {
 		t.Fatalf("cancel cleanup: %#v %v", state, err)
 	}
 	cleanup, err := engine.ClaimActivity(t.Context(), "cleanup", time.Minute)
@@ -295,20 +297,20 @@ func TestCancellationDuringCompensationDoesNotCancelCleanup(t *testing.T) {
 	if _, err := engine.Heartbeat(t.Context(), cleanup, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.CompleteActivity(t.Context(), forward, []byte(`"late"`)); !errors.Is(err, ErrLeaseLost) {
+	if err := engine.CompleteActivity(t.Context(), forward, []byte(`"late"`)); !errors.Is(err, durable.ErrLeaseLost) {
 		t.Fatal(err)
 	}
 	if err := engine.CompleteActivity(t.Context(), cleanup, []byte(`"undone"`)); err != nil {
 		t.Fatal(err)
 	}
 	state, err = engine.Workflow(t.Context(), execution.ID)
-	if err != nil || state.State != WorkflowCancelled || state.CancelSettledAt == nil || state.CancelActor != "operator" || state.CompensationState != CompensationCompleted {
+	if err != nil || state.State != durable.WorkflowCancelled || state.CancelSettledAt == nil || state.CancelActor != "operator" || state.CompensationState != durable.CompensationCompleted {
 		t.Fatalf("cancel settled: %#v %v", state, err)
 	}
 }
 
 func TestCompensationActivationRollsBackWithHistoryFailure(t *testing.T) {
-	engine, _, execution := compensationExecution(t, RetryPolicy{})
+	engine, _, execution := compensationExecution(t, durable.RetryPolicy{})
 	completeForwardSteps(t, engine, 2)
 	claim, err := engine.ClaimActivity(t.Context(), "forward", time.Minute)
 	if err != nil {
@@ -321,11 +323,11 @@ func TestCompensationActivationRollsBackWithHistoryFailure(t *testing.T) {
 		t.Fatal("partial activation accepted")
 	}
 	state, err := engine.Workflow(t.Context(), execution.ID)
-	if err != nil || state.State != WorkflowRunning {
+	if err != nil || state.State != durable.WorkflowRunning {
 		t.Fatalf("partial workflow: %#v %v", state, err)
 	}
 	activities, err := engine.Activities(t.Context(), execution.ID)
-	if err != nil || len(activities) != 3 || activities[2].State != ActivityRunning {
+	if err != nil || len(activities) != 3 || activities[2].State != durable.ActivityRunning {
 		t.Fatalf("partial cleanup: %#v %v", activities, err)
 	}
 	if _, err := engine.Heartbeat(t.Context(), claim, time.Minute); err != nil {
@@ -334,30 +336,30 @@ func TestCompensationActivationRollsBackWithHistoryFailure(t *testing.T) {
 }
 
 func TestNoCleanupForUncommittedOrAbsentDeclarations(t *testing.T) {
-	engine, _ := newIntegrationEngine(t, NewManualClock(time.Unix(1, 0)), 1)
-	definition := Define("no-known-cleanup", func(_ string) ([]ActivitySpec, error) {
-		first, err := NewActivity("effect", "no declaration")
+	engine, _ := newIntegrationEngine(t, durable.NewManualClock(time.Unix(1, 0)), 1)
+	definition := durable.Define("no-known-cleanup", func(_ string) ([]durable.ActivitySpec, error) {
+		first, err := durable.NewActivity("effect", "no declaration")
 		if err != nil {
 			return nil, err
 		}
-		cleanup, err := NewActivity("undo", "uncommitted step")
+		cleanup, err := durable.NewActivity("undo", "uncommitted step")
 		if err != nil {
 			return nil, err
 		}
-		last, err := NewActivity("effect", "will fail", WithCompensation(cleanup))
-		return []ActivitySpec{first, last}, err
+		last, err := durable.NewActivity("effect", "will fail", durable.WithCompensation(cleanup))
+		return []durable.ActivitySpec{first, last}, err
 	})
-	if err := Register(engine.registry, definition); err != nil {
+	if err := durable.Register(engine.registry, definition); err != nil {
 		t.Fatal(err)
 	}
-	execution, err := Start(t.Context(), engine, definition, "input")
+	execution, err := durable.Start(t.Context(), engine.Engine, definition, "input")
 	if err != nil {
 		t.Fatal(err)
 	}
 	completeForwardSteps(t, engine, 1)
 	failForward(t, engine)
 	state, err := engine.Workflow(t.Context(), execution.ID)
-	if err != nil || state.State != WorkflowFailed || state.CompensationState != CompensationNone {
+	if err != nil || state.State != durable.WorkflowFailed || state.CompensationState != durable.CompensationNone {
 		t.Fatalf("absent cleanup: %#v %v", state, err)
 	}
 	activities, err := engine.Activities(t.Context(), execution.ID)
@@ -367,19 +369,19 @@ func TestNoCleanupForUncommittedOrAbsentDeclarations(t *testing.T) {
 }
 
 func TestCleanupDeclarationRejectsPostgresInvalidInputAtomically(t *testing.T) {
-	engine, clock, _ := compensationExecution(t, RetryPolicy{})
-	definition := Define("invalid-cleanup", func(_ string) ([]ActivitySpec, error) {
-		cleanup, err := NewActivity("cleanup", json.RawMessage(`"\ud800"`))
+	engine, clock, _ := compensationExecution(t, durable.RetryPolicy{})
+	definition := durable.Define("invalid-cleanup", func(_ string) ([]durable.ActivitySpec, error) {
+		cleanup, err := durable.NewActivity("cleanup", json.RawMessage(`"\ud800"`))
 		if err != nil {
 			return nil, err
 		}
-		step, err := NewActivity("forward", "input", WithCompensation(cleanup))
-		return []ActivitySpec{step}, err
+		step, err := durable.NewActivity("forward", "input", durable.WithCompensation(cleanup))
+		return []durable.ActivitySpec{step}, err
 	})
-	if err := Register(engine.registry, definition); err != nil {
+	if err := durable.Register(engine.registry, definition); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Start(t.Context(), engine, definition, "input"); !errors.Is(err, ErrInvalidInput) {
+	if _, err := durable.Start(t.Context(), engine.Engine, definition, "input"); !errors.Is(err, durable.ErrInvalidInput) {
 		t.Fatalf("cleanup JSON: %v at %s", err, clock.Now())
 	}
 	var count int
@@ -389,10 +391,10 @@ func TestCleanupDeclarationRejectsPostgresInvalidInputAtomically(t *testing.T) {
 }
 
 func TestCompensationConcurrentClaimsAndMissingHandler(t *testing.T) {
-	engine, _, execution := compensationExecution(t, RetryPolicy{})
+	engine, _, execution := compensationExecution(t, durable.RetryPolicy{})
 	completeForwardSteps(t, engine, 2)
 	failForward(t, engine)
-	worker, err := NewWorker(engine, WorkerConfig{ID: "forward-only"}, compCreate.Handle(func(_ context.Context, input string) (string, error) { return input, nil }))
+	worker, err := durable.NewWorker(engine.Engine, durable.WorkerConfig{ID: "forward-only"}, compCreate.Handle(func(_ context.Context, input string) (string, error) { return input, nil }))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +406,7 @@ func TestCompensationConcurrentClaimsAndMissingHandler(t *testing.T) {
 		t.Fatalf("cleanup diagnostic: %#v %v", unsupported, err)
 	}
 	type result struct {
-		claim Claim
+		claim durable.Claim
 		err   error
 	}
 	results := make(chan result, 20)
@@ -419,10 +421,10 @@ func TestCompensationConcurrentClaimsAndMissingHandler(t *testing.T) {
 		result := runtimeReceive(t, results)
 		if result.err == nil {
 			claimed++
-			if result.claim.Kind != ActivityCompensation {
+			if result.claim.Kind != durable.ActivityCompensation {
 				t.Fatal(result.claim.Kind)
 			}
-		} else if !errors.Is(result.err, ErrNoActivity) {
+		} else if !errors.Is(result.err, durable.ErrNoActivity) {
 			t.Fatal(result.err)
 		}
 	}

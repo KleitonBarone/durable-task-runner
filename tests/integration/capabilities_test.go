@@ -1,37 +1,39 @@
 //go:build integration
 
-package durable
+package integration
 
 import (
 	"context"
 	"testing"
 	"time"
+
+	durable "github.com/KleitonBarone/durable-task-runner"
 )
 
 func TestWorkersClaimOnlyCompatibleActivities(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	engine, _ := newIntegrationEngine(t, SystemClock{}, 1)
-	a := DefineActivity[string, string]("a")
-	b := DefineActivity[string, string]("b")
-	definition := Define("heterogeneous", func(input string) ([]ActivitySpec, error) {
+	engine, _ := newIntegrationEngine(t, durable.SystemClock{}, 1)
+	a := durable.DefineActivity[string, string]("a")
+	b := durable.DefineActivity[string, string]("b")
+	definition := durable.Define("heterogeneous", func(input string) ([]durable.ActivitySpec, error) {
 		first, err := a.Step("first", input)
 		if err != nil {
 			return nil, err
 		}
 		second, err := b.Step("second", input)
-		return []ActivitySpec{first, second}, err
+		return []durable.ActivitySpec{first, second}, err
 	})
-	if err := Register(engine.registry, definition); err != nil {
+	if err := durable.Register(engine.registry, definition); err != nil {
 		t.Fatal(err)
 	}
-	execution, err := Start(ctx, engine, definition, "input")
+	execution, err := durable.Start(ctx, engine.Engine, definition, "input")
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := WorkerConfig{ID: "worker", LeaseDuration: time.Minute, HeartbeatInterval: time.Second, PollInterval: time.Millisecond}
+	config := durable.WorkerConfig{ID: "worker", LeaseDuration: time.Minute, HeartbeatInterval: time.Second, PollInterval: time.Millisecond}
 	echo := func(_ context.Context, input string) (string, error) { return input, nil }
-	workerB, err := NewWorker(engine, config, b.Handle(echo))
+	workerB, err := durable.NewWorker(engine.Engine, config, b.Handle(echo))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,19 +46,19 @@ func TestWorkersClaimOnlyCompatibleActivities(t *testing.T) {
 	}
 	// Separate processes have separate registries. An incompatible type with the
 	// same name must also remain unclaimed, without failing the execution.
-	otherEngine, err := New(engine.pool, NewRegistry(), SystemClock{})
+	otherEngine, err := newTestEngine(engine.pool, durable.NewRegistry(), durable.SystemClock{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrong := DefineActivity[int, string]("a")
-	wrongWorker, err := NewWorker(otherEngine, config, wrong.Handle(func(context.Context, int) (string, error) { t.Error("wrong handler called"); return "", nil }))
+	wrong := durable.DefineActivity[int, string]("a")
+	wrongWorker, err := durable.NewWorker(otherEngine.Engine, config, wrong.Handle(func(context.Context, int) (string, error) { t.Error("wrong handler called"); return "", nil }))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if worked, err := wrongWorker.RunOnce(ctx); err != nil || worked {
 		t.Fatalf("incompatible claim: %v %v", worked, err)
 	}
-	workerA, err := NewWorker(engine, config, a.Handle(echo))
+	workerA, err := durable.NewWorker(engine.Engine, config, a.Handle(echo))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +72,7 @@ func TestWorkersClaimOnlyCompatibleActivities(t *testing.T) {
 		t.Fatalf("B did not claim: %v %v", worked, err)
 	}
 	result, err := engine.Workflow(ctx, execution.ID)
-	if err != nil || result.State != WorkflowCompleted {
+	if err != nil || result.State != durable.WorkflowCompleted {
 		t.Fatalf("result: %#v %v", result, err)
 	}
 	activities, err := engine.Activities(ctx, execution.ID)

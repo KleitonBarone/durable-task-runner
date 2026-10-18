@@ -1,6 +1,6 @@
 //go:build integration
 
-package durable
+package benchmarks
 
 import (
 	"context"
@@ -10,14 +10,16 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	durable "github.com/KleitonBarone/durable-task-runner"
 )
 
-func seedBenchmark(b *testing.B, count int) (*Engine, []WorkflowExecution) {
+func seedBenchmark(b *testing.B, count int) (*benchmarkEngine, []durable.WorkflowExecution) {
 	b.Helper()
-	engine, definition := newIntegrationEngine(b, SystemClock{}, 1)
-	executions := make([]WorkflowExecution, 0, count)
+	engine, definition := newBenchmarkEngine(b)
+	executions := make([]durable.WorkflowExecution, 0, count)
 	for range count {
-		execution, err := Start(b.Context(), engine, definition, integrationInput{})
+		execution, err := durable.Start(b.Context(), engine.Engine, definition, integrationInput{})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -51,7 +53,7 @@ func BenchmarkClaimContention(b *testing.B) {
 			for next.Add(1) <= int64(b.N) {
 				for {
 					_, err := engine.ClaimActivity(ctx, fmt.Sprintf("benchmark-%d", i), time.Minute)
-					if errors.Is(err, ErrNoActivity) {
+					if errors.Is(err, durable.ErrNoActivity) {
 						empty.Add(1)
 						continue
 					}
@@ -107,7 +109,7 @@ func BenchmarkTimelinePage(b *testing.B) {
 			}
 			b.ResetTimer()
 			for range b.N {
-				page, err := engine.ListTimeline(b.Context(), executions[0].ID, PageRequest{Limit: 100})
+				page, err := engine.ListTimeline(b.Context(), executions[0].ID, durable.PageRequest{Limit: 100})
 				if err != nil || len(page.Items) != 100 {
 					b.Fatalf("timeline size=%d: %v", len(page.Items), err)
 				}

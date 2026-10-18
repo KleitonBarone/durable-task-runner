@@ -1,11 +1,13 @@
 //go:build integration
 
-package durable
+package integration
 
 import (
 	"fmt"
 	"testing"
 	"time"
+
+	durable "github.com/KleitonBarone/durable-task-runner"
 )
 
 func TestProgressionRollsBackWithHistoryFailure(t *testing.T) {
@@ -15,8 +17,8 @@ func TestProgressionRollsBackWithHistoryFailure(t *testing.T) {
 			if event == "activity.ready" {
 				steps = 2
 			}
-			engine, definition := newIntegrationEngine(t, NewManualClock(time.Unix(1000, 0)), steps)
-			execution, err := Start(t.Context(), engine, definition, integrationInput{})
+			engine, definition := newIntegrationEngine(t, durable.NewManualClock(time.Unix(1000, 0)), steps)
+			execution, err := durable.Start(t.Context(), engine.Engine, definition, integrationInput{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -32,15 +34,15 @@ func TestProgressionRollsBackWithHistoryFailure(t *testing.T) {
 				t.Fatal("history failure acknowledged completion")
 			}
 			workflow, err := engine.Workflow(t.Context(), execution.ID)
-			if err != nil || workflow.State != WorkflowRunning || workflow.Output != nil {
+			if err != nil || workflow.State != durable.WorkflowRunning || workflow.Output != nil {
 				t.Fatalf("workflow changed: %#v %v", workflow, err)
 			}
 			activities, err := engine.Activities(t.Context(), execution.ID)
-			if err != nil || len(activities) != steps || activities[0].State != ActivityRunning || (steps == 2 && activities[1].State != ActivityBlocked) {
+			if err != nil || len(activities) != steps || activities[0].State != durable.ActivityRunning || (steps == 2 && activities[1].State != durable.ActivityBlocked) {
 				t.Fatalf("partial activity progression: %#v %v", activities, err)
 			}
 			attempts, err := engine.Attempts(t.Context(), claim.ActivityID)
-			if err != nil || len(attempts) != 1 || attempts[0].State != AttemptRunning {
+			if err != nil || len(attempts) != 1 || attempts[0].State != durable.AttemptRunning {
 				t.Fatalf("attempt changed: %#v %v", attempts, err)
 			}
 			var leases int
@@ -68,7 +70,7 @@ func TestProgressionRollsBackWithHistoryFailure(t *testing.T) {
 				}
 			}
 			workflow, err = engine.Workflow(t.Context(), execution.ID)
-			if err != nil || workflow.State != WorkflowCompleted {
+			if err != nil || workflow.State != durable.WorkflowCompleted {
 				t.Fatalf("cannot complete after rollback: %#v %v", workflow, err)
 			}
 		})

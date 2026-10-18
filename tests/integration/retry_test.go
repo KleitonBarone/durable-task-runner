@@ -1,6 +1,6 @@
 //go:build integration
 
-package durable
+package integration
 
 import (
 	"context"
@@ -8,20 +8,22 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	durable "github.com/KleitonBarone/durable-task-runner"
 )
 
-func retryExecution(t *testing.T, policy RetryPolicy) (*Engine, *ManualClock, WorkflowExecution) {
+func retryExecution(t *testing.T, policy durable.RetryPolicy) (*integrationEngine, *durable.ManualClock, durable.WorkflowExecution) {
 	t.Helper()
-	clock := NewManualClock(time.Unix(1, 0))
+	clock := durable.NewManualClock(time.Unix(1, 0))
 	engine, _ := newIntegrationEngine(t, clock, 1)
-	definition := Define("retry", func(input string) ([]ActivitySpec, error) {
-		step, err := NewActivity("effect", input, WithRetry(policy))
-		return []ActivitySpec{step}, err
+	definition := durable.Define("retry", func(input string) ([]durable.ActivitySpec, error) {
+		step, err := durable.NewActivity("effect", input, durable.WithRetry(policy))
+		return []durable.ActivitySpec{step}, err
 	})
-	if err := Register(engine.registry, definition); err != nil {
+	if err := durable.Register(engine.registry, definition); err != nil {
 		t.Fatal(err)
 	}
-	execution, err := Start(t.Context(), engine, definition, "input")
+	execution, err := durable.Start(t.Context(), engine.Engine, definition, "input")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +33,7 @@ func retryExecution(t *testing.T, policy RetryPolicy) (*Engine, *ManualClock, Wo
 func TestRetryDueTimeSurvivesRestartAndExhaustion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	engine, clock, execution := retryExecution(t, RetryPolicy{MaxAttempts: 3, RetryErrors: true, InitialInterval: time.Second, MaximumInterval: 2 * time.Second})
+	engine, clock, execution := retryExecution(t, durable.RetryPolicy{MaxAttempts: 3, RetryErrors: true, InitialInterval: time.Second, MaximumInterval: 2 * time.Second})
 	first, err := engine.ClaimActivity(ctx, "first", time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -40,7 +42,7 @@ func TestRetryDueTimeSurvivesRestartAndExhaustion(t *testing.T) {
 		t.Fatal(err)
 	}
 	activities, err := engine.Activities(ctx, execution.ID)
-	if err != nil || activities[0].State != ActivityWaiting || !activities[0].AvailableAt.Equal(clock.Now().Add(time.Second)) {
+	if err != nil || activities[0].State != durable.ActivityWaiting || !activities[0].AvailableAt.Equal(clock.Now().Add(time.Second)) {
 		t.Fatalf("retry wait: %#v %v", activities, err)
 	}
 	attempts, err := engine.Attempts(ctx, first.ActivityID)
@@ -51,10 +53,10 @@ func TestRetryDueTimeSurvivesRestartAndExhaustion(t *testing.T) {
 	if n, err := engine.RecoverAbandoned(ctx, 100); err != nil || n != 0 {
 		t.Fatalf("early scheduler: %d %v", n, err)
 	}
-	if _, err := engine.ClaimActivity(ctx, "early", time.Minute); !errors.Is(err, ErrNoActivity) {
+	if _, err := engine.ClaimActivity(ctx, "early", time.Minute); !errors.Is(err, durable.ErrNoActivity) {
 		t.Fatalf("early claim: %v", err)
 	}
-	restarted, err := New(engine.pool, NewRegistry(), clock)
+	restarted, err := newTestEngine(engine.pool, durable.NewRegistry(), clock)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,16 +83,16 @@ func TestRetryDueTimeSurvivesRestartAndExhaustion(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := engine.Workflow(ctx, execution.ID)
-	if err != nil || result.State != WorkflowFailed || result.TerminalReason != "attempt_budget_exhausted" {
+	if err != nil || result.State != durable.WorkflowFailed || result.TerminalReason != "attempt_budget_exhausted" {
 		t.Fatalf("exhausted: %#v %v", result, err)
 	}
-	if _, err := restarted.ClaimActivity(ctx, "fourth", time.Minute); !errors.Is(err, ErrNoActivity) {
+	if _, err := restarted.ClaimActivity(ctx, "fourth", time.Minute); !errors.Is(err, durable.ErrNoActivity) {
 		t.Fatalf("budget exceeded: %v", err)
 	}
 }
 
 func TestAbandonmentConsumesFiniteClaimBudget(t *testing.T) {
-	engine, clock, execution := retryExecution(t, RetryPolicy{})
+	engine, clock, execution := retryExecution(t, durable.RetryPolicy{})
 	for i := 1; i <= 3; i++ {
 		claim, err := engine.ClaimActivity(t.Context(), "vanishing", time.Second)
 		if err != nil || claim.AttemptNumber != i {
@@ -102,16 +104,16 @@ func TestAbandonmentConsumesFiniteClaimBudget(t *testing.T) {
 		}
 	}
 	result, err := engine.Workflow(t.Context(), execution.ID)
-	if err != nil || result.State != WorkflowFailed || result.TerminalReason != "attempt_budget_exhausted" {
+	if err != nil || result.State != durable.WorkflowFailed || result.TerminalReason != "attempt_budget_exhausted" {
 		t.Fatalf("abandonment budget: %#v %v", result, err)
 	}
-	if _, err := engine.ClaimActivity(t.Context(), "extra", time.Second); !errors.Is(err, ErrNoActivity) {
+	if _, err := engine.ClaimActivity(t.Context(), "extra", time.Second); !errors.Is(err, durable.ErrNoActivity) {
 		t.Fatalf("unbounded abandonment: %v", err)
 	}
 }
 
 func TestPermanentFailureDoesNotRetryAndSchedulerPromotionIsIdempotent(t *testing.T) {
-	engine, clock, execution := retryExecution(t, RetryPolicy{RetryErrors: true, InitialInterval: time.Second})
+	engine, clock, execution := retryExecution(t, durable.RetryPolicy{RetryErrors: true, InitialInterval: time.Second})
 	claim, err := engine.ClaimActivity(t.Context(), "first", time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -146,11 +148,11 @@ func TestPermanentFailureDoesNotRetryAndSchedulerPromotionIsIdempotent(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.FailActivity(t.Context(), claim, Permanent(errors.New("stop"))); err != nil {
+	if err := engine.FailActivity(t.Context(), claim, durable.Permanent(errors.New("stop"))); err != nil {
 		t.Fatal(err)
 	}
 	result, err := engine.Workflow(t.Context(), execution.ID)
-	if err != nil || result.State != WorkflowFailed || result.TerminalReason != "permanent_error" {
+	if err != nil || result.State != durable.WorkflowFailed || result.TerminalReason != "permanent_error" {
 		t.Fatalf("permanent: %#v %v", result, err)
 	}
 }

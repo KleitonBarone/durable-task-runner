@@ -1,6 +1,6 @@
 //go:build integration
 
-package durable_test
+package integration
 
 import (
 	"context"
@@ -8,10 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	durable "github.com/KleitonBarone/durable-task-runner"
 	"github.com/KleitonBarone/durable-task-runner/internal/testdb"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type observedClock struct {

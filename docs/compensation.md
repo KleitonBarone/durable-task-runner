@@ -60,7 +60,7 @@ See [ADR 0006](decisions/0006-compensation.md) for transaction and failure rules
 ## Reproduce a cleanup crash
 
 ```sh
-go run ./cmd/dev e2e -run TestProcessCompensationRecoversAfterCleanupEffect .
+go run ./cmd/dev e2e -run TestProcessCompensationRecoversAfterCleanupEffect ./tests/e2e
 ```
 
 The isolated process fixture fails its last forward step, kills a worker after

@@ -77,9 +77,9 @@ when an effect must deduplicate across separate executions.
 These commands create isolated PostgreSQL and clean up their containers:
 
 ```sh
-go run ./cmd/dev e2e -run TestProcessRetryBackoffSurvivesSchedulerRestart .
-go run ./cmd/dev e2e -run TestProcessRepeatedCrashesExhaustClaimBudget .
-go run ./cmd/dev e2e -run TestProcessHangingHandlerTimesOutWhileAnotherJobProgresses .
+go run ./cmd/dev e2e -run TestProcessRetryBackoffSurvivesSchedulerRestart ./tests/e2e
+go run ./cmd/dev e2e -run TestProcessRepeatedCrashesExhaustClaimBudget ./tests/e2e
+go run ./cmd/dev e2e -run TestProcessHangingHandlerTimesOutWhileAnotherJobProgresses ./tests/e2e
 ```
 
 Observed output from these scenarios:

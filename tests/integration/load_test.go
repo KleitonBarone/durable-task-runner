@@ -1,6 +1,6 @@
 //go:build integration
 
-package durable
+package integration
 
 import (
 	"context"
@@ -12,30 +12,32 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	durable "github.com/KleitonBarone/durable-task-runner"
 )
 
 func TestBoundedLoadRecoversLostAcknowledgementsWithSchedulerOverlap(t *testing.T) {
 	const jobs, crashes = 200, 20
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	clock := NewManualClock(time.Unix(1000, 0))
+	clock := durable.NewManualClock(time.Unix(1000, 0))
 	engine, _ := newIntegrationEngine(t, clock, 1)
-	first := DefineActivity[int, int]("load-effect")
-	last := DefineActivity[int, int]("load-result")
-	definition := Define("bounded-load", func(in int) ([]ActivitySpec, error) {
+	first := durable.DefineActivity[int, int]("load-effect")
+	last := durable.DefineActivity[int, int]("load-result")
+	definition := durable.Define("bounded-load", func(in int) ([]durable.ActivitySpec, error) {
 		a, err := first.Step("effect", in)
 		if err != nil {
 			return nil, err
 		}
 		b, err := last.Step("result", in)
-		return []ActivitySpec{a, b}, err
+		return []durable.ActivitySpec{a, b}, err
 	})
-	if err := Register(engine.registry, definition); err != nil {
+	if err := durable.Register(engine.registry, definition); err != nil {
 		t.Fatal(err)
 	}
-	var executions []WorkflowExecution
+	var executions []durable.WorkflowExecution
 	for i := range jobs {
-		execution, err := Start(ctx, engine, definition, i, WithStartKey(fmt.Sprintf("load/%d", i)))
+		execution, err := durable.Start(ctx, engine.Engine, definition, i, durable.WithStartKey(fmt.Sprintf("load/%d", i)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -63,7 +65,7 @@ func TestBoundedLoadRecoversLostAcknowledgementsWithSchedulerOverlap(t *testing.
 	start := make(chan struct{})
 	var recovered atomic.Int64
 	for range 2 {
-		scheduler, err := NewScheduler(engine, time.Second, 100)
+		scheduler, err := durable.NewScheduler(engine.Engine, time.Second, 100)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -81,8 +83,8 @@ func TestBoundedLoadRecoversLostAcknowledgementsWithSchedulerOverlap(t *testing.
 		}()
 	}
 	for i := range 4 {
-		worker, err := NewWorker(engine, WorkerConfig{ID: fmt.Sprintf("load-%d", i)}, first.Handle(func(ctx context.Context, input int) (int, error) {
-			metadata, _ := Metadata(ctx)
+		worker, err := durable.NewWorker(engine.Engine, durable.WorkerConfig{ID: fmt.Sprintf("load-%d", i)}, first.Handle(func(ctx context.Context, input int) (int, error) {
+			metadata, _ := durable.Metadata(ctx)
 			mu.Lock()
 			if active[metadata.ActivityID] {
 				mu.Unlock()
@@ -148,17 +150,17 @@ func TestBoundedLoadRecoversLostAcknowledgementsWithSchedulerOverlap(t *testing.
 		t.Fatalf("stuck or inconsistent load: workflows=%d activities=%d abandoned=%d attempts=%d active leases=%d", completed, activities, abandoned, attempts, leases)
 	}
 	for _, i := range []int{0, jobs - 1} {
-		if output, err := last.WorkflowResult(ctx, engine, executions[i].ID); err != nil || output != i+1 {
+		if output, err := last.WorkflowResult(ctx, engine.Engine, executions[i].ID); err != nil || output != i+1 {
 			t.Fatalf("job %d result=%d: %v", i, output, err)
 		}
 	}
-	page, err := engine.ListWorkflows(ctx, WorkflowFilter{DefinitionName: definition.Name}, PageRequest{Limit: 50})
+	page, err := engine.ListWorkflows(ctx, durable.WorkflowFilter{DefinitionName: definition.Name}, durable.PageRequest{Limit: 50})
 	if err != nil {
 		t.Fatal(err)
 	}
 	count := len(page.Items)
 	for page.NextCursor != "" {
-		page, err = engine.ListWorkflows(ctx, WorkflowFilter{DefinitionName: definition.Name}, PageRequest{Limit: 50, Cursor: page.NextCursor})
+		page, err = engine.ListWorkflows(ctx, durable.WorkflowFilter{DefinitionName: definition.Name}, durable.PageRequest{Limit: 50, Cursor: page.NextCursor})
 		if err != nil {
 			t.Fatal(err)
 		}

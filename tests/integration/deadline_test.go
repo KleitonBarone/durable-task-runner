@@ -1,6 +1,6 @@
 //go:build integration
 
-package durable
+package integration
 
 import (
 	"context"
@@ -8,20 +8,22 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	durable "github.com/KleitonBarone/durable-task-runner"
 )
 
-func deadlineExecution(t *testing.T, timeout time.Duration, options ...StartOption) (*Engine, *ManualClock, WorkflowExecution) {
+func deadlineExecution(t *testing.T, timeout time.Duration, options ...durable.StartOption) (*integrationEngine, *durable.ManualClock, durable.WorkflowExecution) {
 	t.Helper()
-	clock := NewManualClock(time.Unix(1, 0))
+	clock := durable.NewManualClock(time.Unix(1, 0))
 	engine, _ := newIntegrationEngine(t, clock, 1)
-	definition := Define("deadline", func(input string) ([]ActivitySpec, error) {
-		step, err := NewActivity("effect", input, WithAttemptTimeout(timeout))
-		return []ActivitySpec{step}, err
+	definition := durable.Define("deadline", func(input string) ([]durable.ActivitySpec, error) {
+		step, err := durable.NewActivity("effect", input, durable.WithAttemptTimeout(timeout))
+		return []durable.ActivitySpec{step}, err
 	})
-	if err := Register(engine.registry, definition); err != nil {
+	if err := durable.Register(engine.registry, definition); err != nil {
 		t.Fatal(err)
 	}
-	execution, err := Start(t.Context(), engine, definition, "input", options...)
+	execution, err := durable.Start(t.Context(), engine.Engine, definition, "input", options...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,15 +45,15 @@ func TestHeartbeatsCannotExtendAttemptDeadline(t *testing.T) {
 		t.Fatalf("heartbeat: %s %v", expiry, err)
 	}
 	clock.Advance(time.Second)
-	if err := engine.CompleteActivity(t.Context(), claim, []byte(`"late"`)); !errors.Is(err, ErrLeaseLost) || !errors.Is(err, ErrExecutionDeadline) {
+	if err := engine.CompleteActivity(t.Context(), claim, []byte(`"late"`)); !errors.Is(err, durable.ErrLeaseLost) || !errors.Is(err, durable.ErrExecutionDeadline) {
 		t.Fatalf("late completion: %v", err)
 	}
 	result, err := engine.Workflow(t.Context(), execution.ID)
-	if err != nil || result.State != WorkflowTimedOut || result.TerminalReason != "attempt_deadline" {
+	if err != nil || result.State != durable.WorkflowTimedOut || result.TerminalReason != "attempt_deadline" {
 		t.Fatalf("timeout: %#v %v", result, err)
 	}
 	attempts, err := engine.Attempts(t.Context(), claim.ActivityID)
-	if err != nil || attempts[0].State != AttemptTimedOut {
+	if err != nil || attempts[0].State != durable.AttemptTimedOut {
 		t.Fatalf("attempt: %#v %v", attempts, err)
 	}
 }
@@ -63,12 +65,12 @@ func TestDelayedRecoveryPreservesEarlierLeaseExpiry(t *testing.T) {
 			name = "compensation"
 		}
 		t.Run(name, func(t *testing.T) {
-			var engine *Engine
-			var clock *ManualClock
-			var execution WorkflowExecution
+			var engine *integrationEngine
+			var clock *durable.ManualClock
+			var execution durable.WorkflowExecution
 			leaseDuration := 30 * time.Second
 			if cleanup {
-				engine, clock, execution = compensationExecution(t, RetryPolicy{})
+				engine, clock, execution = compensationExecution(t, durable.RetryPolicy{})
 				completeForwardSteps(t, engine, 2)
 				failForward(t, engine)
 				leaseDuration = 500 * time.Millisecond
@@ -81,7 +83,7 @@ func TestDelayedRecoveryPreservesEarlierLeaseExpiry(t *testing.T) {
 			}
 			// Both limits pass while the scheduler is down, but ownership ended first.
 			clock.Advance(6 * time.Minute)
-			restarted, err := New(engine.pool, NewRegistry(), clock)
+			restarted, err := newTestEngine(engine.pool, durable.NewRegistry(), clock)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -89,11 +91,11 @@ func TestDelayedRecoveryPreservesEarlierLeaseExpiry(t *testing.T) {
 				t.Fatalf("delayed recovery: %d %v", n, err)
 			}
 			attempts, err := restarted.Attempts(t.Context(), first.ActivityID)
-			if err != nil || len(attempts) != 1 || attempts[0].State != AttemptAbandoned || attempts[0].Error != "lease_expired" {
+			if err != nil || len(attempts) != 1 || attempts[0].State != durable.AttemptAbandoned || attempts[0].Error != "lease_expired" {
 				t.Fatalf("earlier lease expiry must remain abandonment: %#v %v", attempts, err)
 			}
-			leases, err := restarted.ListLeases(t.Context(), first.ActivityID, PageRequest{})
-			if err != nil || len(leases.Items) != 1 || leases.Items[0].State != LeaseExpired {
+			leases, err := restarted.ListLeases(t.Context(), first.ActivityID, durable.PageRequest{})
+			if err != nil || len(leases.Items) != 1 || leases.Items[0].State != durable.LeaseExpired {
 				t.Fatalf("expired ownership: %#v %v", leases, err)
 			}
 			if n, err := restarted.RecoverAbandoned(t.Context(), 10); err != nil || n != 0 {
@@ -103,13 +105,13 @@ func TestDelayedRecoveryPreservesEarlierLeaseExpiry(t *testing.T) {
 			if err != nil || second.ActivityID != first.ActivityID || second.AttemptNumber != 2 || second.StepKey != first.StepKey {
 				t.Fatalf("replacement: %#v %v", second, err)
 			}
-			if err := restarted.CompleteActivity(t.Context(), first, []byte(`"late"`)); !errors.Is(err, ErrLeaseLost) {
+			if err := restarted.CompleteActivity(t.Context(), first, []byte(`"late"`)); !errors.Is(err, durable.ErrLeaseLost) {
 				t.Fatalf("stale acknowledgement: %v", err)
 			}
 			if err := restarted.CompleteActivity(t.Context(), second, []byte(`"done"`)); err != nil {
 				t.Fatal(err)
 			}
-			want := WorkflowCompleted
+			want := durable.WorkflowCompleted
 			if cleanup {
 				remaining, err := restarted.ClaimActivity(t.Context(), "replacement", time.Second)
 				if err != nil {
@@ -118,7 +120,7 @@ func TestDelayedRecoveryPreservesEarlierLeaseExpiry(t *testing.T) {
 				if err := restarted.CompleteActivity(t.Context(), remaining, []byte(`"done"`)); err != nil {
 					t.Fatal(err)
 				}
-				want = WorkflowFailed
+				want = durable.WorkflowFailed
 			}
 			result, err := restarted.Workflow(t.Context(), execution.ID)
 			if err != nil || result.State != want {
@@ -129,38 +131,38 @@ func TestDelayedRecoveryPreservesEarlierLeaseExpiry(t *testing.T) {
 }
 
 func TestWorkflowDeadlineStopsUnclaimedWork(t *testing.T) {
-	engine, clock, execution := deadlineExecution(t, time.Minute, WithWorkflowTimeout(2*time.Second), WithStartKey("deadline"))
+	engine, clock, execution := deadlineExecution(t, time.Minute, durable.WithWorkflowTimeout(2*time.Second), durable.WithStartKey("deadline"))
 	clock.Advance(2 * time.Second)
-	if _, err := engine.ClaimActivity(t.Context(), "late", time.Minute); !errors.Is(err, ErrNoActivity) {
+	if _, err := engine.ClaimActivity(t.Context(), "late", time.Minute); !errors.Is(err, durable.ErrNoActivity) {
 		t.Fatal(err)
 	}
 	result, err := engine.Workflow(t.Context(), execution.ID)
-	if err != nil || result.State != WorkflowTimedOut || result.TerminalReason != "workflow_deadline" {
+	if err != nil || result.State != durable.WorkflowTimedOut || result.TerminalReason != "workflow_deadline" {
 		t.Fatalf("deadline: %#v %v", result, err)
 	}
 	activities, err := engine.Activities(t.Context(), execution.ID)
-	if err != nil || activities[0].State != ActivityTimedOut || activities[0].AttemptCount != 0 {
+	if err != nil || activities[0].State != durable.ActivityTimedOut || activities[0].AttemptCount != 0 {
 		t.Fatalf("unclaimed: %#v %v", activities, err)
 	}
 }
 
 func TestReconciliationLinksNewExecutionWithoutReopeningOld(t *testing.T) {
-	engine, clock, old := deadlineExecution(t, time.Second, WithWorkflowTimeout(time.Second))
-	definition := Define("reconcile", func(input string) ([]ActivitySpec, error) {
-		step, err := NewActivity("effect", input)
-		return []ActivitySpec{step}, err
+	engine, clock, old := deadlineExecution(t, time.Second, durable.WithWorkflowTimeout(time.Second))
+	definition := durable.Define("reconcile", func(input string) ([]durable.ActivitySpec, error) {
+		step, err := durable.NewActivity("effect", input)
+		return []durable.ActivitySpec{step}, err
 	})
-	if err := Register(engine.registry, definition); err != nil {
+	if err := durable.Register(engine.registry, definition); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Start(t.Context(), engine, definition, "fix", WithPredecessor(old.ID)); !errors.Is(err, ErrInvalidInput) {
+	if _, err := durable.Start(t.Context(), engine.Engine, definition, "fix", durable.WithPredecessor(old.ID)); !errors.Is(err, durable.ErrInvalidInput) {
 		t.Fatalf("active predecessor: %v", err)
 	}
 	clock.Advance(time.Second)
 	if _, err := engine.RecoverAbandoned(t.Context(), 10); err != nil {
 		t.Fatal(err)
 	}
-	next, err := Start(t.Context(), engine, definition, "fix", WithPredecessor(old.ID), WithStartKey("reconcile"))
+	next, err := durable.Start(t.Context(), engine.Engine, definition, "fix", durable.WithPredecessor(old.ID), durable.WithStartKey("reconcile"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,10 +171,10 @@ func TestReconciliationLinksNewExecutionWithoutReopeningOld(t *testing.T) {
 		t.Fatalf("link: %#v %v", stored, err)
 	}
 	previous, err := engine.Workflow(t.Context(), old.ID)
-	if err != nil || previous.State != WorkflowTimedOut {
+	if err != nil || previous.State != durable.WorkflowTimedOut {
 		t.Fatalf("predecessor: %#v %v", previous, err)
 	}
-	duplicate, err := Start(t.Context(), engine, definition, "fix", WithStartKey("reconcile"))
+	duplicate, err := durable.Start(t.Context(), engine.Engine, definition, "fix", durable.WithStartKey("reconcile"))
 	if err != nil || duplicate.ID != next.ID {
 		t.Fatalf("duplicate: %#v %v", duplicate, err)
 	}
@@ -190,7 +192,7 @@ func TestCompletionRacingTimeoutCannotReopenExecution(t *testing.T) {
 	go func() {
 		defer group.Done()
 		err := engine.CompleteActivity(t.Context(), claim, []byte(`"late"`))
-		if !errors.Is(err, ErrLeaseLost) {
+		if !errors.Is(err, durable.ErrLeaseLost) {
 			t.Errorf("completion: %v", err)
 		}
 	}()
@@ -202,7 +204,7 @@ func TestCompletionRacingTimeoutCannotReopenExecution(t *testing.T) {
 	}()
 	group.Wait()
 	result, err := engine.Workflow(t.Context(), execution.ID)
-	if err != nil || result.State != WorkflowTimedOut || result.Output != nil {
+	if err != nil || result.State != durable.WorkflowTimedOut || result.Output != nil {
 		t.Fatalf("race result: %#v %v", result, err)
 	}
 }
@@ -210,7 +212,12 @@ func TestCompletionRacingTimeoutCannotReopenExecution(t *testing.T) {
 func TestWorkerCancelsHandlerAtDeadline(t *testing.T) {
 	engine, clock, execution := deadlineExecution(t, time.Second)
 	started, cancelled := make(chan struct{}), make(chan struct{})
-	worker, err := NewWorker(engine, WorkerConfig{ID: "deadline"}, Handle("effect", func(ctx context.Context, _ string) (string, error) {
+	controlled := &runtimeClock{ManualClock: clock, created: make(chan time.Duration, 10)}
+	engine, err := newTestEngine(engine.pool, engine.registry, controlled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := durable.NewWorker(engine.Engine, durable.WorkerConfig{ID: "deadline"}, durable.Handle("effect", func(ctx context.Context, _ string) (string, error) {
 		close(started)
 		<-ctx.Done()
 		close(cancelled)
@@ -219,26 +226,24 @@ func TestWorkerCancelsHandlerAtDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	controlled := &runtimeClock{ManualClock: clock, created: make(chan time.Duration, 10)}
-	engine.clock = controlled
 	done := make(chan error, 1)
 	go func() { _, err := worker.RunOnce(t.Context()); done <- err }()
 	runtimeReceive(t, started)
 	runtimeReceive(t, controlled.created)
 	runtimeReceive(t, controlled.created)
 	clock.Advance(time.Second)
-	if err := runtimeReceive(t, done); !errors.Is(err, ErrLeaseLost) {
+	if err := runtimeReceive(t, done); !errors.Is(err, durable.ErrLeaseLost) {
 		t.Fatal(err)
 	}
 	runtimeReceive(t, cancelled)
 	result, err := engine.Workflow(t.Context(), execution.ID)
-	if err != nil || result.State != WorkflowTimedOut {
+	if err != nil || result.State != durable.WorkflowTimedOut {
 		t.Fatalf("worker deadline: %#v %v", result, err)
 	}
 }
 
 func TestAttemptTimeoutRetriesOnlyWithinPersistedBudget(t *testing.T) {
-	engine, clock, execution := retryExecution(t, RetryPolicy{MaxAttempts: 2, RetryErrors: true, InitialInterval: time.Second})
+	engine, clock, execution := retryExecution(t, durable.RetryPolicy{MaxAttempts: 2, RetryErrors: true, InitialInterval: time.Second})
 	first, err := engine.ClaimActivity(t.Context(), "first", 10*time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +253,7 @@ func TestAttemptTimeoutRetriesOnlyWithinPersistedBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	activities, err := engine.Activities(t.Context(), execution.ID)
-	if err != nil || activities[0].State != ActivityWaiting {
+	if err != nil || activities[0].State != durable.ActivityWaiting {
 		t.Fatalf("timeout retry: %#v %v", activities, err)
 	}
 	clock.Advance(time.Second)
@@ -259,7 +264,7 @@ func TestAttemptTimeoutRetriesOnlyWithinPersistedBudget(t *testing.T) {
 	if err != nil || second.AttemptNumber != 2 {
 		t.Fatalf("retry claim: %#v %v", second, err)
 	}
-	if err := engine.CompleteActivity(t.Context(), first, []byte(`"stale"`)); !errors.Is(err, ErrLeaseLost) {
+	if err := engine.CompleteActivity(t.Context(), first, []byte(`"stale"`)); !errors.Is(err, durable.ErrLeaseLost) {
 		t.Fatal(err)
 	}
 	clock.Advance(5 * time.Minute)
@@ -267,7 +272,7 @@ func TestAttemptTimeoutRetriesOnlyWithinPersistedBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := engine.Workflow(t.Context(), execution.ID)
-	if err != nil || result.State != WorkflowTimedOut || result.TerminalReason != "attempt_budget_exhausted" {
+	if err != nil || result.State != durable.WorkflowTimedOut || result.TerminalReason != "attempt_budget_exhausted" {
 		t.Fatalf("timeout budget: %#v %v", result, err)
 	}
 }

@@ -1,6 +1,6 @@
 //go:build integration
 
-package durable
+package integration
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	durable "github.com/KleitonBarone/durable-task-runner"
 )
 
 func TestWorkerHonorsDurableCancellation(t *testing.T) {
@@ -18,9 +20,9 @@ func TestWorkerHonorsDurableCancellation(t *testing.T) {
 			name = "ignores_context"
 		}
 		t.Run(name, func(t *testing.T) {
-			clock := &runtimeClock{ManualClock: NewManualClock(time.Unix(1, 0)), created: make(chan time.Duration, 10)}
+			clock := &runtimeClock{ManualClock: durable.NewManualClock(time.Unix(1, 0)), created: make(chan time.Duration, 10)}
 			engine, definition := newIntegrationEngine(t, clock, 2)
-			execution, err := Start(t.Context(), engine, definition, integrationInput{})
+			execution, err := durable.Start(t.Context(), engine.Engine, definition, integrationInput{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -30,8 +32,8 @@ func TestWorkerHonorsDurableCancellation(t *testing.T) {
 			releaseHandler := func() { releaseOnce.Do(func() { close(release) }) }
 			defer releaseHandler()
 			var laterCalls atomic.Int32
-			worker, err := NewWorker(engine, WorkerConfig{ID: "cancel-worker"},
-				Handle("step_1", func(ctx context.Context, input integrationInput) (integrationInput, error) {
+			worker, err := durable.NewWorker(engine.Engine, durable.WorkerConfig{ID: "cancel-worker"},
+				durable.Handle("step_1", func(ctx context.Context, input integrationInput) (integrationInput, error) {
 					defer close(returned)
 					close(started)
 					<-ctx.Done()
@@ -42,7 +44,7 @@ func TestWorkerHonorsDurableCancellation(t *testing.T) {
 					}
 					return integrationInput{}, ctx.Err()
 				}),
-				Handle("step_2", func(_ context.Context, input integrationInput) (integrationInput, error) {
+				durable.Handle("step_2", func(_ context.Context, input integrationInput) (integrationInput, error) {
 					laterCalls.Add(1)
 					return input, nil
 				}))
@@ -64,7 +66,7 @@ func TestWorkerHonorsDurableCancellation(t *testing.T) {
 				t.Fatal(err)
 			}
 			result, err := engine.Workflow(t.Context(), execution.ID)
-			if err != nil || result.State != WorkflowCancelled {
+			if err != nil || result.State != durable.WorkflowCancelled {
 				t.Fatalf("settled: %#v %v", result, err)
 			}
 			if !cooperative {
@@ -74,11 +76,11 @@ func TestWorkerHonorsDurableCancellation(t *testing.T) {
 				clock.Advance(5 * time.Second)
 			}
 			err = runtimeReceive(t, done)
-			if !errors.Is(err, ErrLeaseLost) || errors.Is(err, ErrHandlerUnresponsive) == cooperative {
+			if !errors.Is(err, durable.ErrLeaseLost) || errors.Is(err, durable.ErrHandlerUnresponsive) == cooperative {
 				t.Fatalf("worker cancellation: %v", err)
 			}
 			if !cooperative {
-				if _, err := worker.RunOnce(t.Context()); !errors.Is(err, ErrHandlerUnresponsive) {
+				if _, err := worker.RunOnce(t.Context()); !errors.Is(err, durable.ErrHandlerUnresponsive) {
 					t.Fatalf("worker reuse: %v", err)
 				}
 			}
@@ -88,7 +90,7 @@ func TestWorkerHonorsDurableCancellation(t *testing.T) {
 				t.Fatal("cancelled successor ran")
 			}
 			result, err = engine.Workflow(t.Context(), execution.ID)
-			if err != nil || result.State != WorkflowCancelled || result.Output != nil {
+			if err != nil || result.State != durable.WorkflowCancelled || result.Output != nil {
 				t.Fatalf("late handler outcome: %#v %v", result, err)
 			}
 		})
