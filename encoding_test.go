@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -30,5 +31,16 @@ func TestPayloadBoundariesAndEncodingErrors(t *testing.T) {
 	var mismatch *json.UnmarshalTypeError
 	if !errors.Is(err, ErrInvalidInput) || !errors.As(err, &mismatch) {
 		t.Fatalf("decode error lost: %v", err)
+	}
+}
+
+func TestNewIDReturnsUUID(t *testing.T) {
+	id, err := newID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pattern := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	if !pattern.MatchString(id) {
+		t.Fatalf("generated id %q is not a version 4 UUID", id)
 	}
 }

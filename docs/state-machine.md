@@ -1,8 +1,8 @@
 # Execution states
 
 This is the consolidated v1 state reference, including cancellation and
-compensation. The [models](../model.go) define the stored states, and
-[transition validators](../state.go) define the allowed transitions below.
+compensation. The [state models and transition validators](../model.go) define
+the stored states and allowed transitions below.
 [ADR 0002](decisions/0002-state-machine-and-failure-model.md) records the historical
 milestone 1 baseline.
 
